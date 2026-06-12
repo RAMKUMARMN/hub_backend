@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.auth.dependencies import get_current_user
 from app.models.chat import ChatMessage, ChatSession
 from app.models.user import User
 from app.schemas.chat import (

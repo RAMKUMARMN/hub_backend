@@ -1,4 +1,4 @@
-from app.routers.auth import router as auth_router
+from app.auth import auth_router
 from app.routers.chat import router as chat_router
 from app.routers.documents import router as documents_router
 from app.routers.todos import router as todos_router
