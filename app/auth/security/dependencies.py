@@ -1,3 +1,8 @@
+"""
+FastAPI dependency injectors for authentication and authorization.
+
+Person 2 (JWT & Session Management) owns this file.
+"""
 import uuid
 
 from fastapi import Depends, HTTPException, status
@@ -8,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
-from app.auth.service import decode_token
+from app.auth.security.jwt import decode_token
 
 # auto_error=False so we can return 401 instead of FastAPI's default 403
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -18,6 +23,7 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Resolve and return the currently authenticated user from the Bearer token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -46,6 +52,10 @@ async def get_current_user(
 
 
 async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
+    """Extend get_current_user — additionally requires admin privileges."""
     if not current_user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
     return current_user

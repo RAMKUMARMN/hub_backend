@@ -14,10 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.auth.dependencies import get_current_admin
+from app.auth.security.dependencies import get_current_admin
 from app.models.user import User
-from app.auth.schemas import UserResponse
-from app.auth.service import hash_password
+from app.auth.schemas.auth import UserResponse
+from app.auth.security.password import hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 

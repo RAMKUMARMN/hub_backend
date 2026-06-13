@@ -1,3 +1,13 @@
+"""
+Auth Pydantic schemas — request/response contracts.
+
+Shared contract agreed upon by all 4 developers:
+  POST /auth/login  →  TokenResponse
+  POST /auth/register  →  UserResponse
+  GET  /auth/me     →  UserResponse
+
+All developers must NOT change field names here without team agreement.
+"""
 import uuid
 from datetime import datetime
 
@@ -17,6 +27,7 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
+    """Returned by /login and /refresh."""
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -27,6 +38,7 @@ class RefreshRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
+    """Public user representation — never include password hash here."""
     id: uuid.UUID
     email: str
     full_name: str
@@ -41,4 +53,4 @@ class UserResponse(BaseModel):
 class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
-    device_token: str | None = None  # FCM/APNs push token
+    device_token: str | None = None  # FCM/APNs push notification token
