@@ -51,11 +51,30 @@ async def get_current_user(
     return user
 
 
-async def get_current_admin(current_user: User = Depends(get_current_user)) -> User:
-    """Extend get_current_user — additionally requires admin privileges."""
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return current_user
+async def get_current_admin(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> dict:
+    """Check admin privileges directly from JWT without a DB lookup."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not credentials:
+        raise credentials_exception
+
+    try:
+        payload = decode_token(credentials.credentials)
+        if payload.get("type") != "access":
+            raise credentials_exception
+        
+        # Check role directly from token payload
+        if payload.get("role") != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin access required",
+            )
+        
+        return payload
+    except JWTError:
+        raise credentials_exception

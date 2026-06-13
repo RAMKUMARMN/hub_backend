@@ -30,7 +30,7 @@ def _generate_temp_password(length: int = 12) -> str:
 @router.post("/users/bulk", status_code=status.HTTP_202_ACCEPTED)
 async def bulk_create_users(
     file: UploadFile,
-    current_admin: User = Depends(get_current_admin),
+    current_admin: dict = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -85,7 +85,7 @@ async def bulk_create_users(
 
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
-    current_admin: User = Depends(get_current_admin),
+    current_admin: dict = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(User).order_by(User.created_at.desc()))
@@ -95,7 +95,7 @@ async def list_users(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: uuid.UUID,
-    current_admin: User = Depends(get_current_admin),
+    current_admin: dict = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(select(User).where(User.id == user_id))
