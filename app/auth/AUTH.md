@@ -90,6 +90,7 @@ Token rotation
 Refresh token revocation
 Cookie handling
 Authentication middleware
+Rate limiting for /refresh endpoint
 JWT Payload
 {
   "sub": "user-id",

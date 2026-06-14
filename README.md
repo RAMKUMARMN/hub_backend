@@ -11,6 +11,7 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
 ## Prerequisites
 - Python 3.10+
 - PostgreSQL (or SQLite for local dev)
+- Redis (Required for rate limiting and session management)
 
 ## Setup Instructions
 
@@ -32,12 +33,20 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    ```
    *(For a zero-setup SQLite database, run `pip install aiosqlite` and use `DATABASE_URL=sqlite+aiosqlite:///./local_dev.db`)*
 
-4. **Run Database Migrations (Alembic):**
+4. **Set up Redis:**
+   Ensure Redis is running locally on the default port (6379), which is used for rate limiting and session management.
+   ```bash
+   # Ubuntu/Debian: sudo apt install redis && sudo systemctl start redis
+   # macOS: brew install redis && brew services start redis
+   # Docker: docker run -d -p 6379:6379 redis
+   ```
+
+5. **Run Database Migrations (Alembic):**
    ```bash
    alembic upgrade head
    ```
 
-5. **Start the Development Server:**
+6. **Start the Development Server:**
    ```bash
    uvicorn app.main:app --reload
    ```
