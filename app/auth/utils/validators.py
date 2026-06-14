@@ -6,7 +6,7 @@ Used by:
   - Person 3: validate the domain of Google OAuth accounts.
 """
 
-ALLOWED_DOMAINS = {"tkmce.ac.in", "cet.ac.in"}
+ALLOWED_DOMAINS = {"tkmce.ac.in"}
 
 
 def is_valid_institutional_email(email: str) -> bool:

@@ -11,6 +11,7 @@ from app.auth.repositories.user_repository import UserRepository
 from app.auth.security.password import hash_password, verify_password
 from app.auth.schemas.auth import RegisterRequest, TokenResponse
 from app.models.user import User
+from app.auth.utils.validators import is_valid_institutional_email
 
 
 class AuthService:
@@ -33,11 +34,15 @@ class AuthService:
                 detail="Email already registered",
             )
 
+        is_institutional = is_valid_institutional_email(body.email)
+
         return await self.user_repo.create(
             email=body.email,
             full_name=body.full_name,
             hashed_password=hash_password(body.password),
             phone=body.phone,
+            status="active" if is_institutional else "pending",
+            is_active=is_institutional,
         )
 
     async def login(self, email: str, password: str) -> User:
@@ -53,4 +58,17 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid credentials",
             )
+
+        if user.status == "pending":
+            raise HTTPException(
+                status_code=403,
+                detail="Account pending admin approval"
+            )
+
+        if user.status == "suspended":
+            raise HTTPException(
+                status_code=403,
+                detail="Account suspended"
+            )
+
         return user
