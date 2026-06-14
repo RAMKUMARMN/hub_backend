@@ -1,18 +1,41 @@
-"""
-OAuth service — Google SSO for institutional (@tkmce.ac.in) accounts.
+from fastapi import HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-Person 3 (Google OAuth) owns this file.
-Depends on: repositories/user_repository.py, services/token_service.py
+from app.auth.repositories.user_repository import UserRepository
+from app.auth.services.token_service import TokenService
+from app.auth.security.password import hash_password
 
-TODO:
-  1. get_authorization_url(state) → str
-       - Build Google OAuth consent URL using google_client_id from settings.
 
-  2. handle_callback(code, state) → TokenResponse
-       - Exchange the authorization code for a Google access token.
-       - Verify the state parameter to prevent CSRF.
-       - Fetch the user profile from Google's userinfo endpoint.
-       - Validate that the email ends with @tkmce.ac.in.
-       - Upsert the user in the database (auto-create institutional users).
-       - Issue a JWT pair via TokenService.issue_pair().
-"""
+class OAuthService:
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.user_repo = UserRepository(db)
+
+    async def handle_google_user(
+        self,
+        email: str,
+        full_name: str,
+    ):
+
+        if not email.endswith("@tkmce.ac.in"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only TKM institutional accounts allowed"
+            )
+
+        user = await self.user_repo.get_by_email(email)
+
+        if not user:
+
+            user = await self.user_repo.create(
+                email=email,
+                full_name=full_name,
+                hashed_password=hash_password("google-oauth-user"),
+                phone=None,
+            )
+
+        return await TokenService.issue_pair(
+            user,
+            self.db
+        )
