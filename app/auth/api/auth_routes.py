@@ -6,6 +6,7 @@ Person 2 owns: /refresh
 All:           /me, /profile, /avatar
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi_limiter.depends import RateLimiter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -80,7 +81,7 @@ async def logout(
 
 # ── Person 2 ───────────────────────────────────────────────────────────────
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
 async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """
     Exchange a valid refresh token for a new JWT pair.
