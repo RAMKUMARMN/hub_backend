@@ -1,30 +1,34 @@
-"""
-Google OAuth routes — /api/v1/auth/google/*
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
-Person 3 (Google OAuth) owns this file.
+from app.database import get_db
+from app.auth.services.oauth_service import OAuthService
 
-TODO:
-  GET /auth/google
-    - Redirect the user to Google's OAuth consent screen.
-    - Generate a random state parameter, store in session/Redis.
-
-  GET /auth/google/callback
-    - Receive the authorization code from Google.
-    - Delegate to OAuthService.handle_callback(code, state).
-    - Set the refresh token as an HttpOnly cookie and return the access token.
-"""
-from fastapi import APIRouter
-
-router = APIRouter(prefix="/auth", tags=["oauth"])
+router = APIRouter(
+    prefix="/auth",
+    tags=["oauth"]
+)
 
 
 @router.get("/google")
 async def google_login():
-    """Redirect to Google OAuth consent screen. (Person 3 — TODO)"""
-    return {"detail": "Google OAuth not yet implemented"}
+
+    return {
+        "message": "Google OAuth login endpoint"
+    }
 
 
 @router.get("/google/callback")
-async def google_callback(code: str | None = None, state: str | None = None):
-    """Handle Google OAuth callback. (Person 3 — TODO)"""
-    return {"detail": "Google OAuth callback not yet implemented"}
+async def google_callback(
+    db: AsyncSession = Depends(get_db)
+):
+
+    mock_google_user = {
+        "email": "student@tkmce.ac.in",
+        "full_name": "TKM Student"
+    }
+
+    return await OAuthService(db).handle_google_user(
+        email=mock_google_user["email"],
+        full_name=mock_google_user["full_name"]
+    )
