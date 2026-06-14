@@ -51,17 +51,30 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
       - Check account status (pending / suspended) before issuing tokens.
     """
     user = await AuthService(db).login(body.email, body.password)
-    return TokenService.issue_pair(user)
+    return await TokenService.issue_pair(user, db)
 
 
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(
+    body: RefreshRequest | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Logout the current user.
 
     For stateless JWT: client discards tokens.
-    TODO (Person 2): add the refresh token JTI to a Redis/DB blocklist.
+    If a refresh token is provided, it is revoked in the database.
     """
+    if body and body.refresh_token:
+        import hashlib
+        from app.auth.repositories.token_repository import TokenRepository
+        token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+        repo = TokenRepository(db)
+        stored_token = await repo.get_by_hash(token_hash)
+        if stored_token and not stored_token.is_revoked:
+            await repo.revoke(stored_token)
+            
     return {"detail": "Logged out"}
 
 
@@ -77,6 +90,9 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
       - Revoke the old token on rotation (token rotation pattern).
     """
     from jose import JWTError
+    import hashlib
+    from app.auth.repositories.token_repository import TokenRepository
+
     try:
         payload = decode_token(body.refresh_token)
     except JWTError:
@@ -85,6 +101,17 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
     if payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
 
+    # Validate the stored refresh token in DB
+    token_hash = hashlib.sha256(body.refresh_token.encode()).hexdigest()
+    repo = TokenRepository(db)
+    stored_token = await repo.get_by_hash(token_hash)
+    
+    if not stored_token or stored_token.is_revoked:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked refresh token")
+        
+    # Revoke the old token on rotation
+    await repo.revoke(stored_token)
+
     from app.auth.repositories.user_repository import UserRepository
     import uuid
     user_id = payload.get("sub")
@@ -92,7 +119,7 @@ async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
-    return TokenService.issue_pair(user)
+    return await TokenService.issue_pair(user, db)
 
 
 # ── Shared ─────────────────────────────────────────────────────────────────

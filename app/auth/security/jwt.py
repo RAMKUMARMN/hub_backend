@@ -43,3 +43,15 @@ def create_refresh_token(data: dict[str, Any]) -> str:
 def decode_token(token: str) -> dict[str, Any]:
     """Decode and validate a JWT. Raises jose.JWTError on failure."""
     return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+
+
+def verify_token(token: str) -> dict[str, Any] | None:
+    """
+    Helper to verify and decode a token without throwing exceptions.
+    Returns the payload dictionary if valid, or None if invalid or expired.
+    """
+    from jose import JWTError
+    try:
+        return decode_token(token)
+    except JWTError:
+        return None
