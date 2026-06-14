@@ -100,6 +100,7 @@ async def seed_user():
             full_name=TEST_NAME,
             hashed_password=hash_password(TEST_PASSWORD),
             is_active=True,
+            status="active",
         )
         session.add(user)
         await session.commit()
