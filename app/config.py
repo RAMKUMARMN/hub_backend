@@ -9,13 +9,13 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database
-    database_url: str = "postgresql+asyncpg://cixiohub:cixiohub@localhost:5432/cixiohub"
+    database_url: str
 
     # Redis
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str
 
     # JWT
-    secret_key: str = "change-me-in-production-use-openssl-rand-hex-32"
+    secret_key: str
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     chroma_port: int = 8002
 
     # RabbitMQ
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    rabbitmq_url: str
 
     # AWS / S3 / MinIO
     aws_access_key_id: str = ""
@@ -60,6 +60,5 @@ class Settings(BaseSettings):
     test_password: str = ""
     test_name: str = ""
     test_phone: str = ""
-
 
 settings = Settings()
