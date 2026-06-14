@@ -53,7 +53,12 @@ app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 
+@app.get("/")
+async def home():
+    return {"message": "CixioHub Backend Running"}
 
 @app.get("/api/v1/health", tags=["health"])
 async def health():
     return {"status": "ok", "service": "cixiohub-backend"}
+
+
