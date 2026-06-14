@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 import redis.asyncio as redis
 from fastapi_limiter import FastAPILimiter
-
+from app.auth.api.oauth_routes import router as oauth_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -57,7 +57,7 @@ app.include_router(documents_router, prefix=PREFIX)
 app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
-
+app.include_router(oauth_router, prefix=PREFIX)
 
 @app.get("/api/v1/health", tags=["health"])
 async def health():
