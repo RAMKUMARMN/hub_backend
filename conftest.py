@@ -60,3 +60,15 @@ def pytest_sessionfinish(session, exitstatus):
     """Dispose the SQLAlchemy connection pool at the end of the test session."""
     from app.database import engine
     asyncio.run(engine.dispose())
+
+
+import pytest
+from unittest.mock import AsyncMock
+from fastapi_limiter.depends import RateLimiter
+
+
+@pytest.fixture(autouse=True)
+def mock_rate_limiter():
+    """Mock the fastapi-limiter to avoid dependency on Redis during tests."""
+    RateLimiter.__call__ = AsyncMock(return_value=None)
+
