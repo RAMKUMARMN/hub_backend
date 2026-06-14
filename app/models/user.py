@@ -21,6 +21,7 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
     device_tokens: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

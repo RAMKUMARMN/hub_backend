@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.repositories import UserRepository
 from app.database import get_db
 from app.auth.security.dependencies import get_current_admin
 from app.models.user import User
@@ -90,6 +91,32 @@ async def list_users(
 ):
     result = await db.execute(select(User).order_by(User.created_at.desc()))
     return result.scalars().all()
+
+@router.get("/pending-users")
+async def pending_users(
+    admin=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    return await UserRepository(db).get_pending_users()
+
+@router.patch("/approve/{user_id}")
+async def approve_user(
+    user_id: uuid.UUID,
+    admin=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    user = await UserRepository(db).approve_user(user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    return {
+        "message": "User approved successfully",
+        "user_id": str(user.id)
+    }
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

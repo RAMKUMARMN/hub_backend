@@ -20,11 +20,11 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: can run DB migrations check here if needed
+    #Startup: can run DB migrations check here if needed
     redis_connection = redis.from_url(settings.redis_url, encoding="utf8", decode_responses=True)
     await FastAPILimiter.init(redis_connection)
     yield
-    # Shutdown: close DB connections
+    #Shutdown: close DB connections
     await redis_connection.close()
     await engine.dispose()
 
