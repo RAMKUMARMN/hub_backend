@@ -5,7 +5,7 @@ Person 1 owns: /register, /login, /logout
 Person 2 owns: /refresh
 All:           /me, /profile, /avatar
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status, Request
 from fastapi_limiter.depends import RateLimiter
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,7 +81,31 @@ async def logout(
 
 # ── Person 2 ───────────────────────────────────────────────────────────────
 
-@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60))])
+async def refresh_user_identifier(request: Request):
+    """
+    Custom identifier for RateLimiter. Extracts the user ID from the
+    refresh token in the JSON body so we limit per-user instead of per-IP.
+    """
+    try:
+        body = await request.json()
+        refresh_token = body.get("refresh_token")
+        if refresh_token:
+            from app.auth.security.jwt import decode_token
+            payload = decode_token(refresh_token)
+            user_id = payload.get("sub")
+            if user_id:
+                return user_id
+    except Exception:
+        pass
+
+    # Fallback to IP address if token is missing or invalid
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0]
+    return request.client.host + ":" + request.scope["path"]
+
+
+@router.post("/refresh", response_model=TokenResponse, dependencies=[Depends(RateLimiter(times=5, seconds=60, identifier=refresh_user_identifier))])
 async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """
     Exchange a valid refresh token for a new JWT pair.
