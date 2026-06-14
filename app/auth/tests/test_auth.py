@@ -58,11 +58,13 @@ from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.auth.security.password import hash_password
 
-# ── Test constants ──────────────────────────────────────────────────────────
-TEST_EMAIL = "student@tkmce.ac.in"
-TEST_PASSWORD = "securepassword123"
-TEST_NAME = "Albin P S"
-TEST_PHONE = "9876543210"
+# ── Test constants (loaded from .env via app settings) ──────────────────────
+from app.config import settings
+
+TEST_EMAIL = settings.test_email
+TEST_PASSWORD = settings.test_password
+TEST_NAME = settings.test_name
+TEST_PHONE = settings.test_phone
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────

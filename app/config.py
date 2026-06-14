@@ -55,5 +55,11 @@ class Settings(BaseSettings):
     # File upload
     max_upload_size_mb: int = 50
 
+    # Test constants
+    test_email: str = ""
+    test_password: str = ""
+    test_name: str = ""
+    test_phone: str = ""
+
 
 settings = Settings()
