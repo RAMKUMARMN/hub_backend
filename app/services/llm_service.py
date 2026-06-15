@@ -1,22 +1,24 @@
 """
-LLM service — proxies chat streaming requests to the AI service.
+LLM service — direct Ollama streaming (no external AI microservice required).
 
-The AI service (cixio-hub/ai, port 8003) handles:
-  - Ollama streaming
-  - RAG context injection
-  - Embedding generation
+Exposes a chat_stream() async generator that proxies messages to the local
+Ollama /api/chat endpoint and yields individual token strings.
 
-Students (AI/LLM role): implement the streaming logic in cixio-hub/ai.
-Students (Backend role): this file is already wired — focus on chat.py router.
+Also exposes get_embedding() as a thin convenience wrapper around
+vector_service.get_ollama_embedding() for any code that still imports from here.
 """
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
 
 from app.config import settings
+from app.services.vector_service import get_ollama_embedding  # re-export convenience
+
+logger = logging.getLogger(__name__)
 
 
 async def chat_stream(
@@ -26,48 +28,55 @@ async def chat_stream(
     use_rag: bool = False,
 ) -> AsyncIterator[str]:
     """
-    Stream tokens from the AI service chat endpoint.
+    Stream tokens directly from the local Ollama /api/chat endpoint.
 
-    The AI service at /api/v1/chat/stream handles:
-      - Ollama SSE streaming
-      - RAG context injection (if use_rag=True)
+    If context_chunks are provided (e.g. from RAG retrieval), they are
+    injected into a system message prepended to the conversation.
 
-    Yields individual token strings.
+    Yields individual token strings (unwrapped from Ollama's JSON lines).
+    Raises httpx.ConnectError if Ollama is not reachable.
     """
-    payload = {
-        "messages": messages,
-        "user_id": user_id,
-        "use_rag": use_rag,
-    }
+    # Build the final message list; optionally prepend RAG context.
+    if context_chunks:
+        context_text = "\n\n".join(context_chunks)
+        system_msg = {
+            "role": "system",
+            "content": (
+                "Answer the user's question using the following context from "
+                "their uploaded documents:\n\n"
+                f"--- CONTEXT ---\n{context_text}\n----------------"
+            ),
+        }
+        ollama_messages = [system_msg] + messages
+    else:
+        ollama_messages = messages
 
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=120
-    ) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         async with client.stream(
-            "POST", "/api/v1/chat/stream", json=payload
+            "POST",
+            f"{settings.ollama_base_url}/api/chat",
+            json={
+                "model": settings.ollama_model,
+                "messages": ollama_messages,
+                "stream": True,
+            },
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if not line.startswith("data: "):
+                if not line:
                     continue
-                data = line[6:].strip()
-                if data == "[DONE]":
-                    return
                 try:
-                    parsed = json.loads(data)
-                    delta = parsed.get("delta", "")
-                    if delta:
-                        yield delta
-                except json.JSONDecodeError:
+                    parsed = json.loads(line)
+                    token: str = parsed.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                except (json.JSONDecodeError, KeyError):
                     continue
 
 
 async def get_embedding(text: str) -> list[float]:
-    """Get a text embedding vector from the AI service."""
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=60
-    ) as client:
-        response = await client.post("/api/v1/embed", json={"text": text})
-        response.raise_for_status()
-        return response.json()["embedding"]
-
+    """
+    Convenience wrapper — returns a 768-dim embedding from nomic-embed-text.
+    Delegates to vector_service.get_ollama_embedding().
+    """
+    return await get_ollama_embedding(text)

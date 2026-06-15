@@ -1,22 +1,21 @@
 """
-RAG service — proxies ingest / retrieve / delete requests to the AI service.
+RAG service — thin wrappers delegating to vector_service.
 
-The AI service (cixio-hub/ai, port 8003) handles:
-  - Text chunking (~500 tokens, 50 overlap)
-  - Embedding via Ollama nomic-embed-text
-  - ChromaDB storage (per-user collections)
-  - Cosine similarity retrieval
+Previously, these functions proxied requests to an external AI microservice.
+They now delegate directly to the local Qdrant + Ollama pipeline implemented
+in vector_service.py.
 
-Students (AI/LLM role): implement the RAG pipeline in cixio-hub/ai.
-Students (Backend role): this file is already wired.
+Kept for backwards compatibility with any code that still imports from here.
 """
 from __future__ import annotations
 
 import uuid
 
-import httpx
-
-from app.config import settings
+from app.services.vector_service import (
+    delete_document_vectors,
+    search_relevant_chunks,
+    store_document_vectors,
+)
 
 
 async def ingest_document(
@@ -26,60 +25,38 @@ async def ingest_document(
     filename: str = "",
 ) -> int:
     """
-    Send extracted text to the AI service for chunking, embedding, and storage.
+    Chunk, embed via nomic-embed-text, and store in Qdrant.
     Returns the number of chunks stored.
     """
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=120
-    ) as client:
-        response = await client.post(
-            "/api/v1/rag/ingest",
-            json={
-                "user_id": str(user_id),
-                "document_id": str(document_id),
-                "text": text,
-                "filename": filename,
-            },
-        )
-        response.raise_for_status()
-        return response.json()["chunks_stored"]
+    return await store_document_vectors(
+        user_id=user_id,
+        document_id=document_id,
+        text=text,
+        filename=filename,
+    )
 
 
 async def retrieve_chunks(
     user_id: uuid.UUID,
     query: str,
-    n_results: int = 5,
+    n_results: int = 4,
 ) -> list[str]:
     """
-    Ask the AI service for top-k chunks most relevant to the query.
-    Returns a list of chunk text strings.
+    Retrieve the top-n_results document text chunks relevant to `query`.
+    Filtered to the authenticated user's documents only.
+    Returns a list of plain text strings.
     """
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=30
-    ) as client:
-        response = await client.post(
-            "/api/v1/rag/retrieve",
-            json={
-                "user_id": str(user_id),
-                "query": query,
-                "top_k": n_results,
-            },
-        )
-        response.raise_for_status()
-        return response.json()["chunks"]
+    results = await search_relevant_chunks(
+        user_id=user_id,
+        query=query,
+        limit=n_results,
+    )
+    return [item["text"] for item in results]
 
 
 async def delete_document_chunks(
     user_id: uuid.UUID,
     document_id: uuid.UUID,
 ) -> None:
-    """Remove all ChromaDB chunks for a document via the AI service."""
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=30
-    ) as client:
-        response = await client.delete(
-            f"/api/v1/rag/documents/{document_id}",
-            params={"user_id": str(user_id)},
-        )
-        response.raise_for_status()
-
+    """Remove all Qdrant vectors for a given document belonging to the user."""
+    await delete_document_vectors(user_id=user_id, document_id=document_id)
