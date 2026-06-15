@@ -1,6 +1,13 @@
 ---
 name: "backend-agent"
 description: "Describe what this custom agent does and when to use it."
+hooks:
+  PreSession:
+    - type: command
+      command: "if [ -z \"${VIRTUAL_ENV:-}\" ]; then echo 'WARNING: No Python virtualenv active. Run: python3 -m venv .venv && source .venv/bin/activate'; fi"
+  PostCommand:
+    - type: command
+      command: "echo \"[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] exit=$1 | $2\" >> /tmp/backend-agent.log"
 ---
 This custom "backend agent" assists contributors and maintainers working in this repo with FastAPI development, database operations, and service integration tasks for the `hub_backend` module. It acts as a focused, safety-first helper for authoring, reviewing, validating, and documenting changes to the backend API codebase.
 

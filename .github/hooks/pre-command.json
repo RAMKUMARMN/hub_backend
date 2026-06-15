@@ -1,0 +1,14 @@
+[
+  {
+    "run": "case \"$*\" in *\"cat .env\"*|*\"less .env\"*|*\"head .env\"*|*\"tail .env\"*) echo 'BLOCKED: Reading .env directly — use grep on specific keys'; exit 1;; esac",
+    "description": "Block direct reads of .env to prevent secret exposure"
+  },
+  {
+    "run": "if [[ \"$*\" == \"git push origin main\" && -z \"${CI:-}\" ]]; then echo 'BLOCKED: Direct push to main outside CI. Open a PR instead.'; exit 1; fi",
+    "description": "Prevent direct pushes to main outside CI"
+  },
+  {
+    "run": "if [[ \"$*\" == *uvicorn* && \"$*\" != *\"--reload\"* ]]; then echo 'CAUTION: Running uvicorn without --reload'; fi",
+    "description": "Warn when running uvicorn without reload mode"
+  }
+]
