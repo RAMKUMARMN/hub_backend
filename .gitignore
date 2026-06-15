@@ -23,5 +23,9 @@ __pycache__/
 # Temporary files / logs
 *.log
 
+# Redis
+dump.rdb
+
+
 
 

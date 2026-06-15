@@ -34,16 +34,28 @@ class AuthService:
                 detail="Email already registered",
             )
 
-        is_institutional = is_valid_institutional_email(body.email)
+        if not is_valid_institutional_email(body.email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only institutional emails are allowed",
+            )
 
-        return await self.user_repo.create(
+        user = await self.user_repo.create(
             email=body.email,
             full_name=body.full_name,
             hashed_password=hash_password(body.password),
             phone=body.phone,
-            status="active" if is_institutional else "pending",
-            is_active=is_institutional,
+            status="pending",
+            is_active=False,
         )
+
+        from app.auth.services.otp_service import OTPService
+        from app.auth.utils.email import send_otp_email
+
+        code = await OTPService.generate_otp(user.id, "verify_email")
+        await send_otp_email(user.email, code)
+
+        return user
 
     async def login(self, email: str, password: str) -> User:
         """

@@ -79,6 +79,90 @@ async def logout(
     return {"detail": "Logged out"}
 
 
+# ── Person 4 (OTP) ─────────────────────────────────────────────────────────
+
+from app.auth.schemas.otp import OTPRequest, OTPVerifyRequest
+from app.auth.services.otp_service import OTPService
+from app.auth.repositories.user_repository import UserRepository
+from app.auth.utils.email import send_otp_email
+
+
+@router.post("/verify-otp")
+async def verify_otp(body: OTPVerifyRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Verify the 6-digit OTP code sent to the user's email.
+    If valid, activates the user account.
+    """
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_email(body.email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    verified = await OTPService.verify_otp(user.id, body.otp, "verify_email")
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification code"
+        )
+
+    user.is_active = True
+    user.status = "active"
+    await user_repo.save(user)
+    return {"detail": "Email verified successfully"}
+
+
+@router.post("/resend-otp")
+async def resend_otp(body: OTPRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Resend a new 6-digit OTP code to the user's email if they are not active.
+    """
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_email(body.email)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if user.is_active and user.status == "active":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already verified"
+        )
+
+    code = await OTPService.resend_otp(user.id, "verify_email")
+    await send_otp_email(user.email, code)
+    return {"detail": "Verification code resent"}
+
+
+# ── Person 4 (Password Reset) ──────────────────────────────────────────────
+
+from app.auth.schemas.password_reset import PasswordResetRequest, PasswordResetConfirm
+from app.auth.services.password_reset_service import PasswordResetService
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Initiate the password recovery flow. Generates a secure, short-lived link
+    and sends it via email. Returns 200 OK regardless of user existence.
+    """
+    await PasswordResetService.send_reset_email(db, body.email)
+    return {"detail": "If your email is registered, a password reset link has been sent."}
+
+
+@router.post("/reset-password")
+async def reset_password(body: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+    """
+    Reset user's password using the token received in email.
+    """
+    await PasswordResetService.reset_password(db, body.token, body.new_password)
+    return {"detail": "Password has been reset successfully."}
+
+
 # ── Person 2 ───────────────────────────────────────────────────────────────
 
 async def refresh_user_identifier(request: Request):

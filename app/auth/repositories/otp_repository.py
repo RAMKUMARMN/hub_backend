@@ -1,13 +1,8 @@
 """
-OTP repository — stores and validates OTP codes.
+OTP repository — DEPRECATED in favor of Redis-based OTP storage.
+Kept in place for repository mapping compatibility.
 
 Person 4 (OTP & Password Recovery) owns this file.
-
-TODO: Implement the following methods:
-  - create(user_id, code, purpose, expires_at) → OTPCode
-  - get_valid(user_id, code, purpose) → OTPCode | None  (not expired, not used)
-  - mark_used(otp: OTPCode) → None
-  - purge_expired() → int
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 
