@@ -26,6 +26,5 @@ __pycache__/
 # Redis
 dump.rdb
 
-
-
-
+# Uploads
+uploads/
