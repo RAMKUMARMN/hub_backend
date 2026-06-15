@@ -1,12 +1,8 @@
 """
-OTPCode model — stores OTP codes for email verification and account recovery.
+OTPCode model — DEPRECATED in favor of Redis-based OTP storage.
+Kept in place for database schema compatibility.
 
 Person 4 (OTP & Password Recovery) owns this file.
-
-TODO:
-  - After verifying, delete the OTP row (or mark as used).
-  - Add an index on (email, expires_at) for fast lookups.
-  - Consider storing OTPs in Redis instead for auto-expiry (see otp_service.py).
 """
 import uuid
 from datetime import datetime

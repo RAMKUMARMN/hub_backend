@@ -85,6 +85,11 @@ async def clean_database():
     """
     from app.database import engine
     await engine.dispose()
+    from app.redis import redis_client
+    try:
+        await redis_client.connection_pool.disconnect()
+    except Exception:
+        pass
     async with AsyncSessionLocal() as session:
         await session.execute(text("TRUNCATE TABLE users CASCADE;"))
         await session.commit()
@@ -100,6 +105,7 @@ async def seed_user():
             full_name=TEST_NAME,
             hashed_password=hash_password(TEST_PASSWORD),
             is_active=True,
+            status="active",
         )
         session.add(user)
         await session.commit()

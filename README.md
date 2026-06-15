@@ -41,12 +41,25 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    # Docker: docker run -d -p 6379:6379 redis
    ```
 
-5. **Run Database Migrations (Alembic):**
+5. **Set up Local Email Catcher (SMTP):**
+   Ensure an SMTP mail catcher is running on port `1025` to receive OTP codes and password reset links.
+   * **Using Node (Easiest, zero-setup)**:
+     ```bash
+     npx maildev --smtp 1025 --web 8025
+     ```
+   * **Using Docker**:
+     ```bash
+     docker run -d --name hub-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit
+     ```
+   You can view caught emails in your web browser at `http://localhost:8025`.
+   *(If no mail catcher is running, emails will fall back to printing directly inside the backend server console).*
+
+6. **Run Database Migrations (Alembic):**
    ```bash
    alembic upgrade head
    ```
 
-6. **Start the Development Server:**
+7. **Start the Development Server:**
    ```bash
    uvicorn app.main:app --reload
    ```
