@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
+from app.services.vector_service import init_qdrant_collection
 from app.routers import (
     admin_router,
     auth_router,
@@ -20,9 +21,10 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    #Startup: can run DB migrations check here if needed
+    #Startup: initialize Redis rate-limiter and Qdrant vector collection
     redis_connection = redis.from_url(settings.redis_url, encoding="utf8", decode_responses=True)
     await FastAPILimiter.init(redis_connection)
+    await init_qdrant_collection()
     yield
     #Shutdown: close DB connections
     await redis_connection.close()

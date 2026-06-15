@@ -1,22 +1,30 @@
 """
 Documents router — /api/v1/documents/*
 
-Students: implement the upload endpoint to trigger async text extraction + RAG ingestion.
+Integrations:
+  - File upload with validation (PDF, DOCX, TXT, PNG, JPG; max 50 MB).
+  - Text extraction via document_service (calls AI service or runs locally).
+  - Qdrant vector ingestion via vector_service (paragraph-aware chunking,
+    nomic-embed-text embeddings, multi-tenant storage keyed by user_id).
+  - Document listing and deletion (removes file, Qdrant vectors, and DB row).
 """
 import uuid
+import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.document import Document
 from app.models.user import User
 from app.schemas.document import DocumentResponse
 from app.services.document_service import extract_text
-from app.services.rag_service import delete_document_chunks, ingest_document
 from app.services.storage_service import UPLOAD_DIR, delete_file, save_file
+from app.services.vector_service import delete_document_vectors, store_document_vectors
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -39,12 +47,17 @@ async def upload_document(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Upload a document. Text extraction and RAG ingestion run in the background.
+    Upload a document. Text extraction and Qdrant vector ingestion run in the
+    background so the API returns 202 Accepted immediately.
 
-    Returns 202 immediately — check `processed` field later to see when done.
+    Check the `processed` field on subsequent GET requests to know when
+    embedding generation has finished and the document is searchable via RAG.
     """
     if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {file.content_type}",
+        )
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
@@ -64,36 +77,64 @@ async def upload_document(
     await db.commit()
     await db.refresh(doc)
 
-    # Process in background so we return immediately
-    background_tasks.add_task(_process_document, doc.id, storage_path, current_user.id)
+    # Fire-and-forget: extract text, embed, and store in Qdrant.
+    background_tasks.add_task(
+        _process_document, doc.id, storage_path, current_user.id, file.filename
+    )
 
     return doc
 
 
 async def _process_document(
-    document_id: uuid.UUID, storage_path: str, user_id: uuid.UUID
+    document_id: uuid.UUID,
+    storage_path: str,
+    user_id: uuid.UUID,
+    filename: str,
 ) -> None:
-    """Background task: extract text and ingest into ChromaDB."""
-    from app.database import AsyncSessionLocal
+    """
+    Background task: extract plain text from the uploaded file and ingest it
+    into Qdrant (paragraph-chunked, nomic-embed-text embeddings).
 
+    On success  → sets Document.processed = True.
+    On failure  → logs the error; document stays as processed = False so the
+                  caller can retry or surface an error in the UI.
+    """
     async with AsyncSessionLocal() as db:
         try:
-            result_doc = await db.execute(select(Document).where(Document.id == document_id))
+            # Fetch the document row.
+            result_doc = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
             doc = result_doc.scalar_one_or_none()
             if not doc:
                 return
+
+            # Extract plain text from the physical file.
             absolute_path = str(UPLOAD_DIR.resolve() / storage_path)
             text = await extract_text(absolute_path, doc.file_type)
-            await ingest_document(user_id, document_id, text, filename=doc.filename)
 
-            result = await db.execute(select(Document).where(Document.id == document_id))
-            doc = result.scalar_one_or_none()
-            if doc:
-                doc.processed = True
-                await db.commit()
+            if not text.strip():
+                logger.warning(
+                    "Document %s produced empty text — skipping vector storage.", document_id
+                )
+            else:
+                # Chunk, embed, and store in Qdrant (multi-tenant, keyed by user_id).
+                chunks_stored = await store_document_vectors(
+                    user_id=user_id,
+                    document_id=document_id,
+                    text=text,
+                    filename=filename,
+                )
+                logger.info(
+                    "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
+                )
+
+            # Mark the document as ready for RAG queries.
+            doc.processed = True
+            await db.commit()
+
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(
+            logger.error(
                 "Document processing failed for %s: %s", document_id, exc, exc_info=True
             )
 
@@ -126,7 +167,12 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # 1. Remove the physical file from local storage / S3.
     await delete_file(doc.storage_path)
-    await delete_document_chunks(current_user.id, document_id)
+
+    # 2. Remove all Qdrant vectors associated with this document and user.
+    await delete_document_vectors(current_user.id, document_id)
+
+    # 3. Remove the metadata row from PostgreSQL.
     await db.delete(doc)
     await db.commit()

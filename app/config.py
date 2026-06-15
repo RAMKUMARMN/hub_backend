@@ -28,9 +28,13 @@ class Settings(BaseSettings):
     # AI Service — handles LLM, RAG, document extraction
     ai_service_url: str = "http://localhost:8003"
 
-    # ChromaDB
+    # ChromaDB (legacy — replaced by Qdrant)
     chroma_host: str = "localhost"
     chroma_port: int = 8002
+
+    # Qdrant Vector Database
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_collection: str = "user_documents"
 
     # RabbitMQ
     rabbitmq_url: str

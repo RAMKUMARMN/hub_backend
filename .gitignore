@@ -23,5 +23,10 @@ __pycache__/
 # Temporary files / logs
 *.log
 
+# Document Uploads (local dev storage — may contain sensitive files)
+uploads/
 
-
+# Vector Database Local Storage
+qdrant_storage/
+qdrant_data/
+chroma_data/
