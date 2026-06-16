@@ -20,6 +20,7 @@ class SessionResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     content: str
     use_rag: bool = False
+    thinking_mode: bool = True
 
 
 class MessageResponse(BaseModel):

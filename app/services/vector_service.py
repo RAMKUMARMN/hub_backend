@@ -21,6 +21,10 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+<<<<<<< HEAD
+=======
+    MatchAny,
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
     PointStruct,
     TextIndexParams,
     TokenizerType,
@@ -70,15 +74,27 @@ async def init_qdrant_collection() -> None:
                     type="text",
                     tokenizer=TokenizerType.MULTILINGUAL,
                     lowercase=True,
+<<<<<<< HEAD
                     cleansing=True,
+=======
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
                 ),
             )
             logger.info("Full-text payload index created on 'text' field.")
         else:
             logger.info("Qdrant collection '%s' already exists.", settings.qdrant_collection)
     except Exception as exc:
+<<<<<<< HEAD
         logger.error("Failed to initialise Qdrant collection: %s", exc, exc_info=True)
         raise
+=======
+        logger.warning(
+            "Failed to initialise Qdrant collection (is Qdrant running?): %s. "
+            "Vector search and document processing features will be unavailable.",
+            exc,
+            exc_info=settings.debug
+        )
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +171,10 @@ async def store_document_vectors(
     document_id: uuid.UUID,
     text: str,
     filename: str = "",
+<<<<<<< HEAD
+=======
+    session_id: uuid.UUID | None = None,
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
 ) -> int:
     """
     Chunk, embed, and upsert a document into Qdrant.
@@ -162,6 +182,10 @@ async def store_document_vectors(
     Each Qdrant point carries the following payload for filtering and citation:
       user_id      — for multi-tenant isolation in every search query
       document_id  — to allow targeted deletion
+<<<<<<< HEAD
+=======
+      session_id   — to track the scope of local/session documents
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
       filename     — displayed in source citation cards on the frontend
       text         — the raw chunk text returned during retrieval
       chunk_index  — preserves ordering for potential re-assembly
@@ -183,6 +207,10 @@ async def store_document_vectors(
                 payload={
                     "user_id": str(user_id),
                     "document_id": str(document_id),
+<<<<<<< HEAD
+=======
+                    "session_id": str(session_id) if session_id else None,
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
                     "filename": filename,
                     "text": chunk,
                     "chunk_index": idx,
@@ -208,6 +236,10 @@ async def search_relevant_chunks(
     user_id: uuid.UUID,
     query: str,
     limit: int = 4,
+<<<<<<< HEAD
+=======
+    allowed_document_ids: list[uuid.UUID] | None = None,
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -215,11 +247,17 @@ async def search_relevant_chunks(
     The Qdrant filter restricts results exclusively to vectors that belong to
     the authenticated user — guaranteeing complete multi-tenant data isolation.
 
+<<<<<<< HEAD
+=======
+    If allowed_document_ids is provided, restricts search exclusively to those documents.
+
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
     Returns a list of dicts:
       { "text": str, "filename": str, "document_id": str }
     These are forwarded directly to the SSE stream as a 'sources' event so the
     frontend can render clickable citation badges.
     """
+<<<<<<< HEAD
     query_vector = await get_ollama_embedding(query)
 
     results = await qdrant_client.search(
@@ -233,6 +271,32 @@ async def search_relevant_chunks(
                 )
             ]
         ),
+=======
+    if allowed_document_ids is not None and not allowed_document_ids:
+        return []
+
+    query_vector = await get_ollama_embedding(query)
+
+    must_conditions = [
+        FieldCondition(
+            key="user_id",
+            match=MatchValue(value=str(user_id)),
+        )
+    ]
+
+    if allowed_document_ids is not None:
+        must_conditions.append(
+            FieldCondition(
+                key="document_id",
+                match=MatchAny(any=[str(doc_id) for doc_id in allowed_document_ids]),
+            )
+        )
+
+    results = await qdrant_client.query_points(
+        collection_name=settings.qdrant_collection,
+        query=query_vector,
+        query_filter=Filter(must=must_conditions),
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
         limit=limit,
     )
 
@@ -242,7 +306,11 @@ async def search_relevant_chunks(
             "filename": hit.payload.get("filename", "Unknown"),
             "document_id": hit.payload.get("document_id", ""),
         }
+<<<<<<< HEAD
         for hit in results
+=======
+        for hit in results.points
+>>>>>>> 798a7d994a45db6f642d010f49ffeb6372014600
     ]
 
 

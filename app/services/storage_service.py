@@ -32,11 +32,11 @@ async def save_file(file_bytes: bytes, filename: str, user_id: uuid.UUID) -> str
     user_dir.mkdir(parents=True, exist_ok=True)
     dest = user_dir / unique_name
     dest.write_bytes(file_bytes)
-    return str(dest.relative_to(UPLOAD_DIR.resolve()))
+    return str(dest.relative_to(UPLOAD_DIR))
 
 
 async def delete_file(storage_path: str) -> None:
     """Delete a file from local storage or S3."""
-    path = Path(storage_path)
+    path = UPLOAD_DIR / storage_path
     if path.exists():
         path.unlink()

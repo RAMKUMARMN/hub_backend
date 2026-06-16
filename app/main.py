@@ -1,5 +1,4 @@
 from contextlib import asynccontextmanager
-import redis.asyncio as redis
 from fastapi_limiter import FastAPILimiter
 from app.auth.api.oauth_routes import router as oauth_router
 from fastapi import FastAPI
@@ -8,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
-from app.services.vector_service import init_qdrant_collection
 from app.routers import (
     admin_router,
     auth_router,
@@ -16,18 +14,19 @@ from app.routers import (
     documents_router,
     poll_router,
     todos_router,
+    focus_router,
 )
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    #Startup: initialize Redis rate-limiter and Qdrant vector collection
+    #Startup: can run DB migrations check here if needed
     redis_connection = redis.from_url(settings.redis_url, encoding="utf8", decode_responses=True)
     await FastAPILimiter.init(redis_connection)
-    await init_qdrant_collection()
     yield
     #Shutdown: close DB connections
-    await redis_connection.close()
+    await redis_client.close()
     await engine.dispose()
 
 
@@ -60,6 +59,7 @@ app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
+app.include_router(focus_router, prefix=PREFIX)
 
 @app.get("/")
 async def home():

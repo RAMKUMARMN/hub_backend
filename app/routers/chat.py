@@ -28,6 +28,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.chat import ChatMessage, ChatSession
+from app.models.document import Document
 from app.models.user import User
 from app.schemas.chat import (
     CreateSessionRequest,
@@ -239,103 +240,14 @@ async def send_message(
         for m in reversed(history_result.scalars().all())
     ]
 
-    # 4. Count total messages to decide if summarization should be triggered.
-    msg_count_result = await db.execute(
-        select(func.count()).where(ChatMessage.session_id == session_id)
-    )
-    total_msg_count = msg_count_result.scalar_one()
-
-    # 5. Build the system prompt.
-    # Prepend any existing session summary for context window management.
-    if session.summary:
-        system_instruction = (
-            "You are a helpful college assistant. "
-            "Here is a summary of the earlier parts of this conversation:\n"
-            f"{session.summary}\n\n"
-            "Continue the conversation based on the messages below."
-        )
-    else:
-        system_instruction = "You are a helpful college assistant for TKM college students."
-
-    # 6. RAG context injection — search Qdrant for relevant document chunks.
-    matching_data: list[dict] = []
-    if body.use_rag:
-        try:
-            matching_data = await search_relevant_chunks(
-                user_id=current_user.id,
-                query=body.content,
-                limit=4,
-            )
-        except httpx.ConnectError:
-            logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
-
-        if matching_data:
-            context = "\n\n".join(item["text"] for item in matching_data)
-            system_instruction = (
-                "You are an assistant answering questions using the following document context.\n"
-                "Answer based on the context. If the context does not contain the answer, "
-                "say so clearly but still try to help based on general knowledge.\n\n"
-                f"--- DOCUMENT CONTEXT ---\n{context}\n------------------------"
-            )
-            if session.summary:
-                system_instruction += (
-                    f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
-                )
-
-    # 7. Assemble the full message list for Ollama.
-    ollama_messages = [
-        {"role": "system", "content": system_instruction}
-    ] + chat_history
-
-    # Capture ids needed inside the async generator closure.
-    _session_id = session_id
-    _user_id = current_user.id
-
-    async def event_generator():
-        full_response = ""
-
-        # A. Emit source citations as the very first SSE event (RAG only).
-        if matching_data:
-            yield f"data: {json.dumps({'sources': matching_data})}\n\n"
-
-        # B. Stream tokens directly from local Ollama /api/chat endpoint.
-        is_thinking = False
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.ollama_base_url}/api/chat",
-                    json={
-                        "model": settings.ollama_model,
-                        "messages": ollama_messages,
-                        "stream": True,
-                    },
-                ) as response:
-                    response.raise_for_status()
-
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            parsed = json.loads(line)
-                            token: str = parsed.get("message", {}).get("content", "")
-
-                            # Detect DeepSeek-R1 <think> reasoning block boundaries.
-                            if "<think>" in token:
-                                is_thinking = True
-                                token = token.replace("<think>", "")
-                            if "</think>" in token:
-                                is_thinking = False
-                                token = token.replace("</think>", "")
-
-                            if token:
-                                full_response += token
-                                if is_thinking:
-                                    # Stream thinking tokens with a separate key so
-                                    # the frontend can render them differently.
-                                    yield f"data: {json.dumps({'thinking': token})}\n\n"
-                                else:
-                                    yield f"data: {json.dumps({'delta': token})}\n\n"
+        # Stream from AI service (RAG retrieval happens inside the AI service)
+        async for token in chat_stream(
+            history,
+            user_id=str(current_user.id),
+            use_rag=body.use_rag,
+        ):
+            full_response += token
+            yield f"data: {json.dumps({'delta': token})}\n\n"
 
                         except (json.JSONDecodeError, KeyError):
                             continue
