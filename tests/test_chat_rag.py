@@ -396,3 +396,51 @@ async def test_session_scoped_rag_isolation(
     filenames_b = [s["filename"] for s in sources_b]
     assert "global_doc.txt" in filenames_b or "session_b_doc.txt" in filenames_b
     assert "session_a_doc.txt" not in filenames_b
+
+
+@pytest.mark.asyncio
+@patch("app.routers.chat.httpx.AsyncClient.stream")
+async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
+    """
+    Verifies that the thinking_mode query parameter is accepted by the schema
+    and successfully streams a response using a mock LLM (takes <0.1s to complete).
+    """
+    resp = await authenticated_client.post(
+        "/api/v1/chat/sessions",
+        json={"title": "Thinking Mode Toggle Test"}
+    )
+    session_id = resp.json()["id"]
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    
+    async def mock_aiter_lines():
+        lines = [
+            json.dumps({"message": {"content": "Direct response content"}}),
+        ]
+        for line in lines:
+            yield line
+
+    mock_response.aiter_lines = mock_aiter_lines
+    
+    class AsyncContextManagerMock:
+        async def __aenter__(self):
+            return mock_response
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    mock_stream_post.return_value = AsyncContextManagerMock()
+
+    # Test with thinking_mode=False
+    msg_resp_false = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "Direct query", "use_rag": False, "thinking_mode": False}
+    )
+    assert msg_resp_false.status_code == 200
+
+    # Test with thinking_mode=True
+    msg_resp_true = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "Reasoning query", "use_rag": False, "thinking_mode": True}
+    )
+    assert msg_resp_true.status_code == 200
