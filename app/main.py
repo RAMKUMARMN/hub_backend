@@ -16,13 +16,16 @@ from app.routers import (
     documents_router,
     poll_router,
     todos_router,
+    focus_router,
 )
+
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    #Startup: initialize Redis rate-limiter and Qdrant vector collection
+    #Startup: can run DB migrations check here if needed
     await FastAPILimiter.init(redis_client)
+    #Startup: initialize Redis rate-limiter and Qdrant vector collection
     await init_qdrant_collection()
     yield
     #Shutdown: close DB connections
@@ -59,6 +62,7 @@ app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
+app.include_router(focus_router, prefix=PREFIX)
 
 @app.get("/")
 async def home():

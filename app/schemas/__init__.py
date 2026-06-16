@@ -14,6 +14,7 @@ from app.schemas.chat import (
 )
 from app.schemas.document import DocumentResponse
 from app.schemas.todo import CreateTodoRequest, UpdateTodoRequest, CompleteToggleRequest, TodoResponse
+from app.schemas.focus import StartSessionRequest, FocusSessionResponse, ProductivityMetricsResponse
 
 __all__ = [
     "RegisterRequest",
@@ -31,4 +32,7 @@ __all__ = [
     "UpdateTodoRequest",
     "CompleteToggleRequest",
     "TodoResponse",
+    "StartSessionRequest",
+    "FocusSessionResponse",
+    "ProductivityMetricsResponse",
 ]
