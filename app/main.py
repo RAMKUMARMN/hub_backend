@@ -23,9 +23,7 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    #Startup: can run DB migrations check here if needed
     await FastAPILimiter.init(redis_client)
-    #Startup: initialize Redis rate-limiter and Qdrant vector collection
     await init_qdrant_collection()
     yield
     #Shutdown: close DB connections
