@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = '51654f5618e5'
-down_revision: Union[str, None] = '0003_add_chat_session_summary'
+down_revision: Union[str, None] = '47109d712326'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
