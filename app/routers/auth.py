@@ -6,7 +6,8 @@ Students: implement each TODO endpoint.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+import httpx
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
@@ -55,6 +56,22 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    try:
+        async with httpx.AsyncClient(
+        base_url=settings.notify_service_url,
+        timeout=30,
+         ) as client:
+                    await client.post(
+            "/api/v1/notify/send",
+            json={
+                "channel": "email",
+                "recipient": user.email,
+                "subject": "Welcome to CixioHub",
+                "body": f"Hello {user.full_name}, welcome to CixioHub!",
+            },
+        )
+    except Exception:
+         pass
     return user
 
 
