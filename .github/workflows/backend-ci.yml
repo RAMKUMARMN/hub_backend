@@ -1,0 +1,76 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - 'hub_backend/**'
+  pull_request:
+    paths:
+      - 'hub_backend/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10, 3.11]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        working-directory: hub_backend
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest httpx pytest-asyncio fastapi uvicorn
+          pip install ruff || true
+
+      - name: Run linter (ruff)
+        working-directory: hub_backend
+        run: |
+          if command -v ruff >/dev/null 2>&1; then ruff check . || true; else echo "ruff not installed"; fi
+
+      - name: Run tests
+        working-directory: hub_backend
+        run: pytest -q
+
+  migrations:
+    if: github.event_name == 'workflow_dispatch' || (env.RUN_MIGRATIONS == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install alembic
+        working-directory: hub_backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install alembic
+
+      - name: Show alembic current (dry-run)
+        working-directory: hub_backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then echo "DATABASE_URL not set; skipping alembic current"; exit 0; fi
+          alembic current
+
+      - name: Apply migrations (manual trigger)
+        if: env.RUN_MIGRATIONS == 'true' && secrets.DATABASE_URL
+        working-directory: hub_backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          alembic upgrade head

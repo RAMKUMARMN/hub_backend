@@ -1,0 +1,10 @@
+[
+  {
+    "run": "if [ -z \"${VIRTUAL_ENV:-}\" ]; then echo 'WARNING: No Python virtualenv active. Run: python3 -m venv .venv && source .venv/bin/activate'; else echo \"Virtualenv: $VIRTUAL_ENV\"; fi",
+    "description": "Verify Python virtualenv is active"
+  },
+  {
+    "run": "python3 -c \"import fastapi\" 2>/dev/null || echo 'WARNING: Dependencies not installed. Run: pip install -r requirements.txt'",
+    "description": "Check Python dependencies are installed"
+  }
+]
