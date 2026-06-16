@@ -265,3 +265,134 @@ async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_cli
 
     assert "1.4" in full_response, f"Expected fact '1.4' not found in response: '{full_response}'"
     print(f"\n✅ Real RAG response: {full_response}")
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.extract_text")
+async def test_session_scoped_rag_isolation(
+    mock_extract,
+    authenticated_client,
+    setup_qdrant_test_collection,
+):
+    """
+    Tests isolation between global files and session-scoped files:
+    1. Creates Session A and Session B.
+    2. Uploads:
+       - global_doc.txt (global, no session_id)
+       - session_a_doc.txt (scoped to Session A)
+       - session_b_doc.txt (scoped to Session B)
+    3. Verifies that RAG in Session A retrieves chunks only from global_doc.txt and session_a_doc.txt.
+    4. Verifies that RAG in Session B retrieves chunks only from global_doc.txt and session_b_doc.txt.
+    """
+    # Define text extraction mock outputs
+    def mock_extract_side_effect(file_path, file_type):
+        if "global" in file_path:
+            return "This is global knowledge. The key code is GLOBAL_123."
+        elif "session_a" in file_path:
+            return "This is unique session A knowledge. The key code is ALPHABET_A."
+        elif "session_b" in file_path:
+            return "This is unique session B knowledge. The key code is ALPHABET_B."
+        return "Generic fallback content."
+
+    mock_extract.side_effect = mock_extract_side_effect
+
+    # 1. Create Session A and Session B
+    session_a_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Session A"})
+    assert session_a_resp.status_code == status.HTTP_201_CREATED
+    session_a_id = session_a_resp.json()["id"]
+
+    session_b_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Session B"})
+    assert session_b_resp.status_code == status.HTTP_201_CREATED
+    session_b_id = session_b_resp.json()["id"]
+
+    # 2. Upload the three documents
+    # Global document (no session_id)
+    global_upload = await authenticated_client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("global_doc.txt", b"dummy content", "text/plain")}
+    )
+    assert global_upload.status_code == status.HTTP_202_ACCEPTED
+    global_doc_id = global_upload.json()["id"]
+    assert global_upload.json()["session_id"] is None
+
+    # Session A document
+    session_a_upload = await authenticated_client.post(
+        f"/api/v1/documents/upload?session_id={session_a_id}",
+        files={"file": ("session_a_doc.txt", b"dummy content", "text/plain")}
+    )
+    assert session_a_upload.status_code == status.HTTP_202_ACCEPTED
+    session_a_doc_id = session_a_upload.json()["id"]
+    assert session_a_upload.json()["session_id"] == session_a_id
+
+    # Session B document
+    session_b_upload = await authenticated_client.post(
+        f"/api/v1/documents/upload?session_id={session_b_id}",
+        files={"file": ("session_b_doc.txt", b"dummy content", "text/plain")}
+    )
+    assert session_b_upload.status_code == status.HTTP_202_ACCEPTED
+    session_b_doc_id = session_b_upload.json()["id"]
+    assert session_b_upload.json()["session_id"] == session_b_id
+
+    # 3. Wait for all documents to be processed by background tasks
+    processed = False
+    for _ in range(40):
+        await asyncio.sleep(0.5)
+        list_resp = await authenticated_client.get("/api/v1/documents/")
+        assert list_resp.status_code == 200
+        docs = list_resp.json()
+        
+        target_docs = [d for d in docs if d["id"] in [global_doc_id, session_a_doc_id, session_b_doc_id]]
+        if len(target_docs) == 3 and all(d["processed"] for d in target_docs):
+            processed = True
+            break
+            
+    assert processed, "Not all documents were processed in time."
+
+    # 4. Verify RAG in Session A (should match global_doc.txt and session_a_doc.txt, NOT session_b_doc.txt)
+    msg_a_resp = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_a_id}/messages",
+        json={"content": "What is the key code?", "use_rag": True},
+        timeout=50.0
+    )
+    assert msg_a_resp.status_code == 200
+
+    # Parse sources from SSE stream
+    sources_a = []
+    async for line in msg_a_resp.aiter_lines():
+        if line.startswith("data: "):
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            payload = json.loads(data_str)
+            if "sources" in payload:
+                sources_a = payload["sources"]
+                break
+
+    assert len(sources_a) > 0
+    filenames_a = [s["filename"] for s in sources_a]
+    assert "global_doc.txt" in filenames_a or "session_a_doc.txt" in filenames_a
+    assert "session_b_doc.txt" not in filenames_a
+
+    # 5. Verify RAG in Session B (should match global_doc.txt and session_b_doc.txt, NOT session_a_doc.txt)
+    msg_b_resp = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_b_id}/messages",
+        json={"content": "What is the key code?", "use_rag": True},
+        timeout=50.0
+    )
+    assert msg_b_resp.status_code == 200
+
+    sources_b = []
+    async for line in msg_b_resp.aiter_lines():
+        if line.startswith("data: "):
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            payload = json.loads(data_str)
+            if "sources" in payload:
+                sources_b = payload["sources"]
+                break
+
+    assert len(sources_b) > 0
+    filenames_b = [s["filename"] for s in sources_b]
+    assert "global_doc.txt" in filenames_b or "session_b_doc.txt" in filenames_b
+    assert "session_a_doc.txt" not in filenames_b

@@ -23,6 +23,7 @@ async def ingest_document(
     document_id: uuid.UUID,
     text: str,
     filename: str = "",
+    session_id: uuid.UUID | None = None,
 ) -> int:
     """
     Chunk, embed via nomic-embed-text, and store in Qdrant.
@@ -33,6 +34,7 @@ async def ingest_document(
         document_id=document_id,
         text=text,
         filename=filename,
+        session_id=session_id,
     )
 
 

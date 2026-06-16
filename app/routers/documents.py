@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.document import Document
+from app.models.chat import ChatSession
 from app.models.user import User
 from app.schemas.document import DocumentResponse
 from app.services.document_service import extract_text
@@ -43,6 +44,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 async def upload_document(
     file: UploadFile,
     background_tasks: BackgroundTasks,
+    session_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -63,11 +65,23 @@ async def upload_document(
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="File too large (max 50 MB)")
 
+    if session_id:
+        # Verify the session exists and belongs to the authenticated user.
+        session_result = await db.execute(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == current_user.id
+            )
+        )
+        if not session_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
     storage_path = await save_file(contents, file.filename, current_user.id)
     file_type = ALLOWED_TYPES[file.content_type]
 
     doc = Document(
         user_id=current_user.id,
+        session_id=session_id,
         filename=file.filename,
         file_type=file_type,
         file_size=len(contents),
@@ -79,7 +93,7 @@ async def upload_document(
 
     # Fire-and-forget: extract text, embed, and store in Qdrant.
     background_tasks.add_task(
-        _process_document, doc.id, storage_path, current_user.id, file.filename
+        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id
     )
 
     return doc
@@ -90,6 +104,7 @@ async def _process_document(
     storage_path: str,
     user_id: uuid.UUID,
     filename: str,
+    session_id: uuid.UUID | None = None,
 ) -> None:
     """
     Background task: extract plain text from the uploaded file and ingest it
@@ -124,6 +139,7 @@ async def _process_document(
                     document_id=document_id,
                     text=text,
                     filename=filename,
+                    session_id=session_id,
                 )
                 logger.info(
                     "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored

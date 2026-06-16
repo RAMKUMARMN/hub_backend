@@ -28,6 +28,7 @@ from app.config import settings
 from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.chat import ChatMessage, ChatSession
+from app.models.document import Document
 from app.models.user import User
 from app.schemas.chat import (
     CreateSessionRequest,
@@ -261,10 +262,22 @@ async def send_message(
     matching_data: list[dict] = []
     if body.use_rag:
         try:
+            # Retrieve processed documents that belong to current user
+            # AND are either global (session_id IS NULL) OR belong to current session
+            allowed_docs_result = await db.execute(
+                select(Document.id).where(
+                    Document.user_id == current_user.id,
+                    Document.processed == True,
+                    (Document.session_id == None) | (Document.session_id == session_id),
+                )
+            )
+            allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
+
             matching_data = await search_relevant_chunks(
                 user_id=current_user.id,
                 query=body.content,
                 limit=4,
+                allowed_document_ids=allowed_doc_ids,
             )
         except httpx.ConnectError:
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)

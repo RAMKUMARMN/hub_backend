@@ -21,6 +21,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
+    MatchAny,
     PointStruct,
     TextIndexParams,
     TokenizerType,
@@ -158,6 +159,7 @@ async def store_document_vectors(
     document_id: uuid.UUID,
     text: str,
     filename: str = "",
+    session_id: uuid.UUID | None = None,
 ) -> int:
     """
     Chunk, embed, and upsert a document into Qdrant.
@@ -165,6 +167,7 @@ async def store_document_vectors(
     Each Qdrant point carries the following payload for filtering and citation:
       user_id      — for multi-tenant isolation in every search query
       document_id  — to allow targeted deletion
+      session_id   — to track the scope of local/session documents
       filename     — displayed in source citation cards on the frontend
       text         — the raw chunk text returned during retrieval
       chunk_index  — preserves ordering for potential re-assembly
@@ -186,6 +189,7 @@ async def store_document_vectors(
                 payload={
                     "user_id": str(user_id),
                     "document_id": str(document_id),
+                    "session_id": str(session_id) if session_id else None,
                     "filename": filename,
                     "text": chunk,
                     "chunk_index": idx,
@@ -211,6 +215,7 @@ async def search_relevant_chunks(
     user_id: uuid.UUID,
     query: str,
     limit: int = 4,
+    allowed_document_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -218,24 +223,37 @@ async def search_relevant_chunks(
     The Qdrant filter restricts results exclusively to vectors that belong to
     the authenticated user — guaranteeing complete multi-tenant data isolation.
 
+    If allowed_document_ids is provided, restricts search exclusively to those documents.
+
     Returns a list of dicts:
       { "text": str, "filename": str, "document_id": str }
     These are forwarded directly to the SSE stream as a 'sources' event so the
     frontend can render clickable citation badges.
     """
+    if allowed_document_ids is not None and not allowed_document_ids:
+        return []
+
     query_vector = await get_ollama_embedding(query)
+
+    must_conditions = [
+        FieldCondition(
+            key="user_id",
+            match=MatchValue(value=str(user_id)),
+        )
+    ]
+
+    if allowed_document_ids is not None:
+        must_conditions.append(
+            FieldCondition(
+                key="document_id",
+                match=MatchAny(any=[str(doc_id) for doc_id in allowed_document_ids]),
+            )
+        )
 
     results = await qdrant_client.query_points(
         collection_name=settings.qdrant_collection,
         query=query_vector,
-        query_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="user_id",
-                    match=MatchValue(value=str(user_id)),
-                )
-            ]
-        ),
+        query_filter=Filter(must=must_conditions),
         limit=limit,
     )
 
