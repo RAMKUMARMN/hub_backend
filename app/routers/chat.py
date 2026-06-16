@@ -295,6 +295,16 @@ async def send_message(
                     f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
                 )
 
+    # 6.5. Inject thinking mode instruction.
+    if body.thinking_mode:
+        system_instruction += (
+            "\n\nYou may think step by step and output your reasoning inside <think>...</think> tags before answering."
+        )
+    else:
+        system_instruction += (
+            "\n\nRespond directly. Do not output any reasoning or step-by-step thinking, and do not use <think> tags."
+        )
+
     # 7. Assemble the full message list for Ollama.
     ollama_messages = [
         {"role": "system", "content": system_instruction}
