@@ -26,3 +26,51 @@ async def publish_focus_completed(payload: dict):
             message,
             routing_key="focus.session.completed"
         )
+
+async def publish_calendar_notification(payload: dict):
+    """
+    Publish a calendar reminder notification payload to RabbitMQ.
+    """
+    connection = await aio_pika.connect_robust(settings.rabbitmq_url)
+    async with connection:
+        channel = await connection.channel()
+        
+        exchange = await channel.declare_exchange(
+            "cixio.topic",
+            aio_pika.ExchangeType.TOPIC,
+            durable=True
+        )
+        
+        message = aio_pika.Message(
+            body=json.dumps(payload).encode("utf-8"),
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+        )
+        
+        await exchange.publish(
+            message,
+            routing_key="calendar.notification.trigger"
+        )
+
+async def publish_todo_reminder(payload: dict):
+    """
+    Publish a To-Do task reminder notification payload to RabbitMQ.
+    """
+    connection = await aio_pika.connect_robust(settings.rabbitmq_url)
+    async with connection:
+        channel = await connection.channel()
+        
+        exchange = await channel.declare_exchange(
+            "cixio.topic",
+            aio_pika.ExchangeType.TOPIC,
+            durable=True
+        )
+        
+        message = aio_pika.Message(
+            body=json.dumps(payload).encode("utf-8"),
+            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+        )
+        
+        await exchange.publish(
+            message,
+            routing_key="todo.reminder.trigger"
+        )

@@ -17,6 +17,7 @@ from app.routers import (
     poll_router,
     todos_router,
     focus_router,
+    calendar_router,
 )
 
 
@@ -61,6 +62,7 @@ app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
 app.include_router(focus_router, prefix=PREFIX)
+app.include_router(calendar_router, prefix=PREFIX)
 
 @app.get("/")
 async def home():

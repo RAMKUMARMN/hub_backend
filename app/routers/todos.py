@@ -15,6 +15,7 @@ from app.schemas.todo import (
     TodoResponse,
     UpdateTodoRequest,
 )
+from app.queue.producer import publish_todo_reminder
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -43,10 +44,24 @@ async def create_todo(
         title=body.title,
         description=body.description,
         due_date=body.due_date,
+        priority=body.priority,
+        reminder_time=body.reminder_time,
     )
     db.add(todo)
     await db.commit()
     await db.refresh(todo)
+
+    if todo.reminder_time:
+        try:
+            await publish_todo_reminder({
+                "user_id": str(current_user.id),
+                "todo_id": str(todo.id),
+                "title": todo.title,
+                "reminder_time": todo.reminder_time.isoformat()
+            })
+        except Exception:
+            pass
+
     return todo
 
 
@@ -69,6 +84,23 @@ async def update_todo(
         todo.description = body.description
     if body.due_date is not None:
         todo.due_date = body.due_date
+    if body.priority is not None:
+        todo.priority = body.priority
+    
+    old_reminder = todo.reminder_time
+    if body.reminder_time is not None:
+        todo.reminder_time = body.reminder_time
+        if todo.reminder_time and todo.reminder_time != old_reminder:
+            try:
+                await publish_todo_reminder({
+                    "user_id": str(current_user.id),
+                    "todo_id": str(todo.id),
+                    "title": todo.title,
+                    "reminder_time": todo.reminder_time.isoformat()
+                })
+            except Exception:
+                pass
+
     await db.commit()
     await db.refresh(todo)
     return todo
