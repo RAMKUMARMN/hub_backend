@@ -22,6 +22,8 @@ from app.schemas.chat import (
     SessionResponse,
 )
 from app.services.llm_service import chat_stream
+from app.services.task_router import detect_task
+from app.services.n8n_service import trigger_n8n
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -118,6 +120,18 @@ async def send_message(
 
     async def event_generator():
         full_response = ""
+
+        task = detect_task(body.content)
+
+        if task != "chat":
+            result = await trigger_n8n(
+                message=body.content,
+                task=task,
+            )
+
+            yield f"data: {json.dumps(result)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         # Save user message
         user_msg = ChatMessage(session_id=session_id, role="user", content=body.content)
