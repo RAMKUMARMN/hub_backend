@@ -70,15 +70,18 @@ async def init_qdrant_collection() -> None:
                     type="text",
                     tokenizer=TokenizerType.MULTILINGUAL,
                     lowercase=True,
-                    cleansing=True,
                 ),
             )
             logger.info("Full-text payload index created on 'text' field.")
         else:
             logger.info("Qdrant collection '%s' already exists.", settings.qdrant_collection)
     except Exception as exc:
-        logger.error("Failed to initialise Qdrant collection: %s", exc, exc_info=True)
-        raise
+        logger.warning(
+            "Failed to initialise Qdrant collection (is Qdrant running?): %s. "
+            "Vector search and document processing features will be unavailable.",
+            exc,
+            exc_info=settings.debug
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -222,9 +225,9 @@ async def search_relevant_chunks(
     """
     query_vector = await get_ollama_embedding(query)
 
-    results = await qdrant_client.search(
+    results = await qdrant_client.query_points(
         collection_name=settings.qdrant_collection,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=Filter(
             must=[
                 FieldCondition(
@@ -242,7 +245,7 @@ async def search_relevant_chunks(
             "filename": hit.payload.get("filename", "Unknown"),
             "document_id": hit.payload.get("document_id", ""),
         }
-        for hit in results
+        for hit in results.points
     ]
 
 
