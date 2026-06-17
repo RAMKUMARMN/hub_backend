@@ -176,7 +176,8 @@ async def test_list_calendar_events(client, auth_headers):
     # Filter with start/end to fetch only Event 1
     cutoff = start1 + timedelta(days=1)
     filtered_response = await client.get(
-        f"/api/v1/calendar/events?end={cutoff.isoformat()}",
+        "/api/v1/calendar/events",
+        params={"end": cutoff.isoformat()},
         headers=auth_headers
     )
     assert filtered_response.status_code == status.HTTP_200_OK
