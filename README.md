@@ -92,22 +92,118 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    uvicorn app.main:app --reload
    ```
 
+## Setup using Docker (FastAPI Web App Only)
+
+If you want to run only the FastAPI application inside a Docker container while your other services (PostgreSQL, Redis, Qdrant, RabbitMQ, Mailpit, and Ollama) run natively on your host machine:
+
+### 1. Ensure Host Services are Running
+
+Make sure your databases and helper services are active on your local device. If you run them via Docker containers locally:
+*   **Mailpit (SMTP):** `docker start hub-mailpit` (or run it fresh: `docker run -d --name hub-mailpit -p 1025:1025 -p 8025:8025 axllent/mailpit`)
+*   **Qdrant (Vector DB):** `docker start local-qdrant` (or run it fresh: `docker run -d --name local-qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant:latest`)
+*   **PostgreSQL:** `sudo systemctl start postgresql` (or make sure your native service is active)
+*   **Redis:** `sudo systemctl start redis` (or make sure your native service is active)
+*   **Ollama:** `ollama serve` (ensure the server daemon is active)
+
+---
+
+### 2. Linux Setup (Default)
+
+Since you are running Linux, the default configuration uses **Host Networking** (`network_mode: "host"`). This connects the container directly to your host's loopback interface (`localhost`) without extra port mappings.
+
+1. **Copy the Docker environment template:**
+   ```bash
+   cp .env.docker .env
+   ```
+2. **Start the backend container:**
+   ```bash
+   docker compose up --build
+   ```
+
+---
+
+### 3. Windows & macOS Setup
+
+Because Windows and macOS run Docker inside a lightweight virtual machine, they do not support Linux's native `network_mode: "host"`. You need to adjust two settings to connect the container to your host machine:
+
+#### A. Configure Docker Desktop (Windows Only)
+- Ensure **Docker Desktop** is running.
+- Open **Settings > General** and check **"Use the WSL 2 based engine"** (enables WSL 2 integration).
+- Open **Settings > Resources > WSL integration** and turn on integration for your active WSL Linux distro.
+
+#### B. Modify `docker-compose.yml`
+Open [docker-compose.yml](file:///home/albin/Cixio/hub_backend/docker-compose.yml) and change it to bridge mode:
+```yaml
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 1. Comment out or remove network_mode:
+    # network_mode: "host"
+    
+    # 2. Explicitly map ports:
+    ports:
+      - "8000:8000"
+    
+    volumes:
+      - .:/app
+      - uploads:/app/uploads
+    env_file:
+      - .env
+    
+    # 3. Add extra hosts mapping:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+```
+
+#### C. Modify your `.env` file
+Change all occurrences of `localhost` in your `.env` file to **`host.docker.internal`** so the container can resolve your computer's IP address:
+```env
+DATABASE_URL=postgresql+asyncpg://cixiohub:cixiohub@host.docker.internal:5432/cixiohub
+REDIS_URL=redis://host.docker.internal:6379/0
+QDRANT_URL=http://host.docker.internal:6333
+RABBITMQ_URL=amqp://guest:guest@host.docker.internal:5672/
+SMTP_HOST=host.docker.internal
+OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+#### D. Start the backend container
+```bash
+docker compose up --build
+```
+
+---
+
+### 4. Accessing the APIs (All OS)
+*   **FastAPI Web App & Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
 ## Testing the API
-Once the server is running, you can test the APIs interactively by navigating to:
+Once the server is running (either locally or via Docker), you can test the APIs interactively by navigating to:
 **[http://localhost:8000/docs](http://localhost:8000/docs)**
 
 ## Running Automated Tests
-To run all tests (including authentication and local AI/RAG integration tests):
+
+### Running Tests Locally:
+To run all tests:
 ```bash
 pytest
 ```
 
-To run only the new AI and RAG integration tests:
+To run specific test modules:
 ```bash
 pytest tests/test_chat_rag.py -s -v
+pytest app/auth/tests -v
 ```
 
-To run only the authentication and OTP module tests:
+### Running Tests inside Docker:
+To run all tests inside the container environment:
 ```bash
-pytest app/auth/tests -v
+docker compose exec web pytest
+```
+
+To run specific tests inside the container:
+```bash
+docker compose exec web pytest tests/test_chat_rag.py -s -v
+docker compose exec web pytest app/auth/tests -v
 ```

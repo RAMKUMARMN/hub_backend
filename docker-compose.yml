@@ -1,0 +1,18 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Shares your Linux host's network directly.
+    # This allows the container to connect to "localhost" on your device directly.
+    network_mode: "host"
+    volumes:
+      # Mount codebase for local hot-reloads during development
+      - .:/app
+      # Separate volume for uploads so it doesn't pollute host source code
+      - uploads:/app/uploads
+    env_file:
+      - .env
+
+volumes:
+  uploads:
