@@ -18,6 +18,7 @@ class OAuthService:
         full_name: str,
     ):
 
+        # Only TKM accounts
         if not email.endswith("@tkmce.ac.in"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -31,7 +32,7 @@ class OAuthService:
             user = await self.user_repo.create(
                 email=email,
                 full_name=full_name,
-                hashed_password=hash_password("google-oauth-user"),
+                hashed_password=hash_password("oauth-user"),
                 phone=None,
             )
 

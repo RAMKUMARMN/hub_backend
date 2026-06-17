@@ -3,6 +3,7 @@ from fastapi_limiter import FastAPILimiter
 from app.auth.api.oauth_routes import router as oauth_router
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import engine
@@ -24,11 +25,18 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await FastAPILimiter.init(redis_client)
-    await init_qdrant_collection()
+    try:
+        await FastAPILimiter.init(redis_client)
+    except Exception as e:
+        print("Redis not available:", e)
+
+    try:
+        await init_qdrant_collection()
+    except Exception as e:
+        print("Qdrant not available:", e)
+
     yield
-    #Shutdown: close DB connections
-    await redis_client.close()
+
     await engine.dispose()
 
 
@@ -37,6 +45,11 @@ app = FastAPI(
     version="1.0.0",
     description="CixioHub backend API — AI-powered chat platform for TKM students",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
 )
 
 # CORS — allow the Next.js frontend and Flutter web
