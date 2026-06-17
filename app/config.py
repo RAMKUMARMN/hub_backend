@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Database
-    database_url: str
+    database_url: str = "postgresql+asyncpg://postgres:admin123@localhost:5432/cixiohub"
 
     # Redis
     redis_url: str
@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     qdrant_collection: str = "user_documents"
     enable_reranker: bool = False
     reranker_model: str = "mixedbread-ai/mxbai-rerank-base-v1"
+
+    # AI Service — handles LLM, RAG, document extraction
+    ai_service_url: str = "http://localhost:8003"
+
+    # Notify Service
+    notify_service_url: str = "http://localhost:8001"
+
+    # ChromaDB
+    chroma_host: str = "localhost"
+    chroma_port: int = 8002
 
     # RabbitMQ
     rabbitmq_url: str
@@ -75,3 +85,4 @@ class Settings(BaseSettings):
     cloudinary_api_secret: str = ""
 
 settings = Settings()
+print("DB URL:", settings.database_url)
