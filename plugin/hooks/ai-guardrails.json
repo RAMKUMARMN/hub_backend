@@ -1,0 +1,18 @@
+{
+  "id": "cixio.hooks.guardrailsSync",
+  "name": "AI Guardrails & Safety Sync",
+  "event": "PostToolUse",
+  "action": {
+    "type": "shellExecution",
+    "command": "python3",
+    "args": [
+      "scripts/sync_guardrails.py"
+    ],
+    "options": {
+      "env": {
+        "TARGET_FILE": "${activeEditorFile}"
+      }
+    }
+  },
+  "timeout": 20000
+}
