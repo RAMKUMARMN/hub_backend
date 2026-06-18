@@ -19,9 +19,10 @@ from app.routers import (
     todos_router,
     focus_router,
     calendar_router,
+    preferences_router,
+    system_router,
+    roles_router,
 )
-
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -75,6 +76,10 @@ app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
 app.include_router(focus_router, prefix=PREFIX)
 app.include_router(calendar_router, prefix=PREFIX)
+
+app.include_router(preferences_router, prefix=PREFIX)
+app.include_router(system_router, prefix=PREFIX)
+app.include_router(roles_router, prefix=PREFIX)
 
 @app.get("/")
 async def home():

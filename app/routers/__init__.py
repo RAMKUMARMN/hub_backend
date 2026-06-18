@@ -7,4 +7,9 @@ from app.routers.poll import router as poll_router
 from app.routers.focus import router as focus_router
 from app.routers.calendar import router as calendar_router
 
-__all__ = ["auth_router", "chat_router", "documents_router", "todos_router", "admin_router", "poll_router", "focus_router", "calendar_router"]
+from app.routers.preferences import router as preferences_router
+from app.routers.system import router as system_router
+from app.routers.roles import router as roles_router
+
+__all__ = ["auth_router", "chat_router", "documents_router", "todos_router", "admin_router", "poll_router", "focus_router", "calendar_router",
+           "preferences_router", "system_router", "roles_router"]
