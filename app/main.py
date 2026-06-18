@@ -29,14 +29,11 @@ async def lifespan(app: FastAPI):
         await FastAPILimiter.init(redis_client)
     except Exception as e:
         print("Redis not available:", e)
-
     try:
         await init_qdrant_collection()
     except Exception as e:
         print("Qdrant not available:", e)
-
     yield
-
     await engine.dispose()
 
 
