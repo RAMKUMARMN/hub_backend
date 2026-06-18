@@ -1,0 +1,86 @@
+"""
+LLM service — Ollama streaming and text generation.
+
+Provides:
+  - chat_stream()    — Async generator that yields individual tokens from Ollama /api/chat
+  - summarize_text() — One-shot text summarization via Ollama /api/generate
+  - get_embedding()  — Convenience wrapper around vector_service embeddings
+"""
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import AsyncIterator
+
+import httpx
+
+from app.config import settings
+from app.ai.services.vector_service import get_ollama_embedding  # re-export convenience
+
+logger = logging.getLogger(__name__)
+
+
+async def chat_stream(
+    messages: list[dict],
+) -> AsyncIterator[str]:
+    """
+    Stream tokens from the local Ollama /api/chat endpoint.
+
+    Accepts a fully-assembled message list (system prompt + chat history already
+    included by the caller).  Yields individual token strings.
+
+    Raises httpx.ConnectError if Ollama is not reachable.
+    """
+    async with httpx.AsyncClient(timeout=120) as client:
+        async with client.stream(
+            "POST",
+            f"{settings.ollama_base_url}/api/chat",
+            json={
+                "model": settings.ollama_model,
+                "messages": messages,
+                "stream": True,
+            },
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                    token: str = parsed.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+
+async def summarize_text(text: str) -> str:
+    """
+    Summarize text using Ollama /api/generate (non-streaming).
+
+    Returns a concise 3-sentence summary of the input text.
+    Raises httpx.ConnectError if Ollama is not reachable.
+    """
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{settings.ollama_base_url}/api/generate",
+            json={
+                "model": settings.ollama_model,
+                "prompt": (
+                    "Summarize the following conversation in 3 concise sentences. "
+                    "Focus on the main topics and key conclusions discussed:\n\n"
+                    f"{text}"
+                ),
+                "stream": False,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
+
+
+async def get_embedding(text: str) -> list[float]:
+    """
+    Convenience wrapper — returns a 768-dim embedding from nomic-embed-text.
+    Delegates to vector_service.get_ollama_embedding().
+    """
+    return await get_ollama_embedding(text)

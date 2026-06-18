@@ -21,9 +21,8 @@ from app.models.document import Document
 from app.models.chat import ChatSession
 from app.models.user import User
 from app.schemas.document import DocumentResponse
-from app.services.document_service import extract_text
 from app.services.storage_service import UPLOAD_DIR, delete_file, save_file
-from app.services.vector_service import delete_document_vectors, store_document_vectors
+from app.ai.client import AIClient, get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +46,7 @@ async def upload_document(
     session_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
 ):
     """
     Upload a document. Text extraction and Qdrant vector ingestion run in the
@@ -93,7 +93,7 @@ async def upload_document(
 
     # Fire-and-forget: extract text, embed, and store in Qdrant.
     background_tasks.add_task(
-        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id
+        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client
     )
 
     return doc
@@ -105,6 +105,7 @@ async def _process_document(
     user_id: uuid.UUID,
     filename: str,
     session_id: uuid.UUID | None = None,
+    ai_client: AIClient | None = None,
 ) -> None:
     """
     Background task: extract plain text from the uploaded file and ingest it
@@ -114,6 +115,8 @@ async def _process_document(
     On failure  → logs the error; document stays as processed = False so the
                   caller can retry or surface an error in the UI.
     """
+    if ai_client is None:
+        ai_client = get_ai_client()
     async with AsyncSessionLocal() as db:
         try:
             # Fetch the document row.
@@ -126,7 +129,7 @@ async def _process_document(
 
             # Extract plain text from the physical file.
             absolute_path = str(UPLOAD_DIR.resolve() / storage_path)
-            text = await extract_text(absolute_path, doc.file_type)
+            text = await ai_client.extract_text(absolute_path, doc.file_type)
 
             if not text.strip():
                 logger.warning(
@@ -134,7 +137,7 @@ async def _process_document(
                 )
             else:
                 # Chunk, embed, and store in Qdrant (multi-tenant, keyed by user_id).
-                chunks_stored = await store_document_vectors(
+                chunks_stored = await ai_client.store_document_vectors(
                     user_id=user_id,
                     document_id=document_id,
                     text=text,
@@ -173,6 +176,7 @@ async def delete_document(
     document_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
 ):
     result = await db.execute(
         select(Document).where(
@@ -187,7 +191,7 @@ async def delete_document(
     await delete_file(doc.storage_path)
 
     # 2. Remove all Qdrant vectors associated with this document and user.
-    await delete_document_vectors(current_user.id, document_id)
+    await ai_client.delete_document_vectors(current_user.id, document_id)
 
     # 3. Remove the metadata row from PostgreSQL.
     await db.delete(doc)
