@@ -17,11 +17,11 @@ async def google_login(request: Request):
     redirect_uri = request.url_for("google_callback")
 
     print("REDIRECT URI =", redirect_uri)
-
     return await oauth.google.authorize_redirect(
         request,
         redirect_uri
     )
+
 
 @router.get("/google/callback")
 async def google_callback(
@@ -29,9 +29,7 @@ async def google_callback(
     db: AsyncSession = Depends(get_db)
 ):
     token = await oauth.google.authorize_access_token(request)
-
     user_info = token.get("userinfo")
-
     if not user_info:
         user_info = await oauth.google.userinfo(token=token)
 

@@ -278,6 +278,7 @@ async def send_message(
                 query=body.content,
                 limit=4,
                 allowed_document_ids=allowed_doc_ids,
+                session_id=session_id,
             )
         except httpx.ConnectError:
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
