@@ -8,5 +8,25 @@ from app.auth.models.refresh_token import RefreshToken
 from app.auth.models.otp import OTPCode
 from app.models.focus import FocusSession, Achievement, UserAchievement
 from app.models.calendar import CalendarEvent
+from app.models.notes import Note
+from app.models.folder import DocumentFolder
+from app.models.subtask import TodoSubtask
 
-__all__ = ["User", "ChatSession", "ChatMessage", "Document", "Todo", "PollResponse", "RefreshToken", "OTPCode", "FocusSession", "Achievement", "UserAchievement", "CalendarEvent"]
+__all__ = [
+    "User",
+    "ChatSession",
+    "ChatMessage",
+    "Document",
+    "Todo",
+    "PollResponse",
+    "RefreshToken",
+    "OTPCode",
+    "FocusSession",
+    "Achievement",
+    "UserAchievement",
+    "CalendarEvent",
+    "Note",
+    "DocumentFolder",
+    "TodoSubtask",
+]
+

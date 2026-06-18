@@ -19,6 +19,8 @@ from app.routers import (
     todos_router,
     focus_router,
     calendar_router,
+    notes_router,
+    folders_router,
 )
 
 
@@ -73,6 +75,8 @@ app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
 app.include_router(focus_router, prefix=PREFIX)
 app.include_router(calendar_router, prefix=PREFIX)
+app.include_router(notes_router, prefix=PREFIX)
+app.include_router(folders_router, prefix=PREFIX)
 
 @app.get("/")
 async def home():
