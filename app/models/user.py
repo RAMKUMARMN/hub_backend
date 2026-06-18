@@ -25,6 +25,12 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    theme: Mapped[str] = mapped_column(String(20), default="light")
+    language: Mapped[str] = mapped_column(String(20), default="en")
+    timezone: Mapped[str] = mapped_column(String(50), default="UTC")
+
+    email_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    push_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
