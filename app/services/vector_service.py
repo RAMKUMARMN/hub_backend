@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 import logging
+import re
 
 import httpx
 from qdrant_client import AsyncQdrantClient
@@ -216,6 +217,7 @@ async def search_relevant_chunks(
     query: str,
     limit: int = 4,
     allowed_document_ids: list[uuid.UUID] | None = None,
+    session_id: uuid.UUID | None = None,
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -224,6 +226,9 @@ async def search_relevant_chunks(
     the authenticated user — guaranteeing complete multi-tenant data isolation.
 
     If allowed_document_ids is provided, restricts search exclusively to those documents.
+
+    If session_id is provided, candidates are retrieved and prioritized by adding a
+    similarity score boost to those documents belonging to the current session.
 
     Returns a list of dicts:
       { "text": str, "filename": str, "document_id": str }
@@ -250,12 +255,51 @@ async def search_relevant_chunks(
             )
         )
 
+    # Clean and tokenize query into keywords for filename matching
+    words = re.findall(r"\b\w+\b", query.lower())
+    stopwords = {
+        "explain", "show", "summarize", "tell", "describe", "get", "retrieve",
+        "my", "the", "a", "an", "is", "for", "of", "in", "on", "at", "by", "with",
+        "about", "document", "file", "pdf", "docx", "txt", "sheet", "image",
+        "me", "please", "can", "you", "what", "who", "where", "when", "how"
+    }
+    keywords = [w for w in words if w not in stopwords and len(w) > 2]
+
+    # Fetch a larger candidate pool if we are applying score boosting for session or filename priority
+    has_boosting = bool(session_id or keywords)
+    fetch_limit = max(limit * 3, 15) if has_boosting else limit
+
     results = await qdrant_client.query_points(
         collection_name=settings.qdrant_collection,
         query=query_vector,
         query_filter=Filter(must=must_conditions),
-        limit=limit,
+        limit=fetch_limit,
     )
+
+    if has_boosting:
+        boosted_points = []
+        for hit in results.points:
+            score = hit.score if hit.score is not None else 0.0
+            
+            # Apply session boost (+0.15)
+            point_session_id = hit.payload.get("session_id")
+            if session_id and point_session_id == str(session_id):
+                score += 0.15
+
+            # Apply filename keyword match boost (+0.20)
+            filename = hit.payload.get("filename")
+            if filename and keywords:
+                filename_clean = filename.lower().rsplit(".", 1)[0]
+                if any(kw in filename_clean for kw in keywords):
+                    score += 0.20
+
+            boosted_points.append((hit, score))
+        
+        # Sort by boosted score descending
+        boosted_points.sort(key=lambda x: x[1], reverse=True)
+        selected_points = [item[0] for item in boosted_points[:limit]]
+    else:
+        selected_points = results.points[:limit]
 
     return [
         {
@@ -263,7 +307,7 @@ async def search_relevant_chunks(
             "filename": hit.payload.get("filename", "Unknown"),
             "document_id": hit.payload.get("document_id", ""),
         }
-        for hit in results.points
+        for hit in selected_points
     ]
 
 

@@ -444,3 +444,159 @@ async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
         json={"content": "Reasoning query", "use_rag": False, "thinking_mode": True}
     )
     assert msg_resp_true.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collection):
+    """
+    Verifies that search_relevant_chunks prioritizes documents belonging to
+    the current session over global documents when scores are equal.
+    """
+    from app.services.vector_service import store_document_vectors, search_relevant_chunks
+    user_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    
+    global_doc_id = uuid.uuid4()
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=global_doc_id,
+        text="The quick brown fox jumps over the lazy dog.",
+        filename="global.txt",
+        session_id=None,
+    )
+    
+    session_doc_id = uuid.uuid4()
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=session_doc_id,
+        text="The quick brown fox jumps over the lazy dog.",
+        filename="session.txt",
+        session_id=session_id,
+    )
+    
+    results = await search_relevant_chunks(
+        user_id=user_id,
+        query="brown fox",
+        limit=2,
+        allowed_document_ids=[global_doc_id, session_doc_id],
+        session_id=session_id,
+    )
+    
+    assert len(results) == 2
+    assert results[0]["filename"] == "session.txt"
+    assert results[1]["filename"] == "global.txt"
+
+
+
+@pytest.mark.asyncio
+@patch("app.routers.documents.extract_text")
+async def test_api_rag_prioritization(
+    mock_extract,
+    authenticated_client,
+    setup_qdrant_test_collection,
+):
+    """
+    Verifies that the chat messages endpoint prioritizes session-scoped document chunks
+    over global document chunks through the HTTP API.
+    """
+    mock_extract.return_value = "The quick brown fox jumps over the lazy dog."
+
+    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Priority Session"})
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = session_resp.json()["id"]
+
+    global_upload = await authenticated_client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("global_priority.txt", b"dummy", "text/plain")}
+    )
+    assert global_upload.status_code == status.HTTP_202_ACCEPTED
+    global_doc_id = global_upload.json()["id"]
+
+    session_upload = await authenticated_client.post(
+        f"/api/v1/documents/upload?session_id={session_id}",
+        files={"file": ("session_priority.txt", b"dummy", "text/plain")}
+    )
+    assert session_upload.status_code == status.HTTP_202_ACCEPTED
+    session_doc_id = session_upload.json()["id"]
+
+    # Wait for the background worker to index both files in Qdrant
+    processed = False
+    for _ in range(40):
+        await asyncio.sleep(0.5)
+        list_resp = await authenticated_client.get("/api/v1/documents/")
+        assert list_resp.status_code == 200
+        docs = list_resp.json()
+        target_docs = [d for d in docs if d["id"] in [global_doc_id, session_doc_id]]
+        if len(target_docs) == 2 and all(d["processed"] for d in target_docs):
+            processed = True
+            break
+            
+    assert processed, "Documents were not processed in time."
+
+    msg_resp = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "brown fox", "use_rag": True},
+        timeout=50.0
+    )
+    assert msg_resp.status_code == 200
+
+    # Parse sources payload from the stream
+    sources = []
+    async for line in msg_resp.aiter_lines():
+        if line.startswith("data: "):
+            data_str = line[6:]
+            if data_str == "[DONE]":
+                break
+            payload = json.loads(data_str)
+            if "sources" in payload:
+                sources = payload["sources"]
+                break
+
+    assert len(sources) >= 2
+    # The session document must rank higher than the global one due to the +0.15 boost
+    assert sources[0]["filename"] == "session_priority.txt"
+    assert sources[1]["filename"] == "global_priority.txt"
+
+
+@pytest.mark.asyncio
+async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_collection):
+    """
+    Verifies that search_relevant_chunks prioritizes documents whose filename contains
+    keywords from the query, using the +0.20 boost.
+    """
+    from app.services.vector_service import store_document_vectors, search_relevant_chunks
+    user_id = uuid.uuid4()
+    
+    random_doc_id = uuid.uuid4()
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=random_doc_id,
+        text="The quick brown fox jumps over the lazy dog.",
+        filename="random_notes.txt",
+        session_id=None,
+    )
+    
+    resume_doc_id = uuid.uuid4()
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=resume_doc_id,
+        text="The quick brown fox jumps over the lazy dog.",
+        filename="resume_johndoe.pdf",
+        session_id=None,
+    )
+    
+    results = await search_relevant_chunks(
+        user_id=user_id,
+        query="explain my resume",
+        limit=2,
+        allowed_document_ids=[random_doc_id, resume_doc_id],
+        session_id=None,
+    )
+    
+    assert len(results) == 2
+    assert results[0]["filename"] == "resume_johndoe.pdf"
+    assert results[1]["filename"] == "random_notes.txt"
+
+
+
+
