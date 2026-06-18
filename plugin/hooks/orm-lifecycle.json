@@ -1,0 +1,18 @@
+{
+  "id": "cixio.hooks.ormLifecycleSync",
+  "name": "ORM Lifecycle & Database Sync",
+  "event": "PostToolUse",
+  "action": {
+    "type": "shellExecution",
+    "command": "python3",
+    "args": [
+      "scripts/sync_orm_lifecycle.py"
+    ],
+    "options": {
+      "env": {
+        "TARGET_FILE": "${activeEditorFile}"
+      }
+    }
+  },
+  "timeout": 15000
+}
