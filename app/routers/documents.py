@@ -21,7 +21,11 @@ from app.models.document import Document
 from app.models.chat import ChatSession
 from app.models.user import User
 from app.schemas.document import DocumentResponse
-from app.services.storage_service import UPLOAD_DIR, delete_file, save_file
+from app.services.document_service import extract_text
+from app.services.storage_service import delete_file, save_file
+from app.services.vector_service import delete_document_vectors, store_document_vectors
+from app.config import settings
+
 from app.ai.client import AIClient, get_ai_client
 
 logger = logging.getLogger(__name__)
@@ -36,7 +40,7 @@ ALLOWED_TYPES = {
     "image/jpeg": "jpg",
 }
 
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+
 
 
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -62,8 +66,11 @@ async def upload_document(
         )
 
     contents = await file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large (max 50 MB)")
+    if len(contents) > settings.max_upload_size_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {settings.max_upload_size_mb} MB)"
+        )
 
     if session_id:
         # Verify the session exists and belongs to the authenticated user.
@@ -79,6 +86,22 @@ async def upload_document(
     storage_path = await save_file(contents, file.filename, current_user.id)
     file_type = ALLOWED_TYPES[file.content_type]
 
+    existing_result = await db.execute(
+        select(Document)
+        .where(
+            Document.user_id == current_user.id,
+            Document.filename == file.filename,
+        )
+        .order_by(Document.version.desc())
+    )
+
+    latest_document = existing_result.scalars().first()
+
+    version = 1
+
+    if latest_document:
+        version = latest_document.version + 1
+
     doc = Document(
         user_id=current_user.id,
         session_id=session_id,
@@ -86,6 +109,7 @@ async def upload_document(
         file_type=file_type,
         file_size=len(contents),
         storage_path=storage_path,
+        version=version,
     )
     db.add(doc)
     await db.commit()
@@ -127,9 +151,14 @@ async def _process_document(
             if not doc:
                 return
 
+            # TODO:
+            # storage_path now contains a Cloudinary URL.
+            # AI extraction service must support URL-based retrieval.
+            text = await extract_text(storage_path, doc.file_type)
+            
             # Extract plain text from the physical file.
-            absolute_path = str(UPLOAD_DIR.resolve() / storage_path)
-            text = await ai_client.extract_text(absolute_path, doc.file_type)
+            #absolute_path = str(UPLOAD_DIR.resolve() / storage_path)
+            #text = await ai_client.extract_text(absolute_path, doc.file_type)
 
             if not text.strip():
                 logger.warning(
