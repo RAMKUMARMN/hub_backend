@@ -23,7 +23,7 @@ from app.auth.schemas.auth import (
     UserResponse,
 )
 from app.models.user import User
-from app.services.storage_service import save_file
+from app.services.storage_service import save_file, delete_file
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -275,7 +275,21 @@ async def upload_avatar(
         )
 
     contents = await file.read()
-    path = await save_file(contents, file.filename, current_user.id)
+
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Avatar image must be smaller than 5 MB",
+        )
+
+    if current_user.avatar_url:
+        await delete_file(current_user.avatar_url)
+
+    path = await save_file(
+        contents,
+        file.filename,
+        current_user.id,
+    )
     current_user.avatar_url = path
     await db.commit()
     await db.refresh(current_user)

@@ -65,4 +65,9 @@ class Settings(BaseSettings):
     test_name: str = ""
     test_phone: str = ""
 
+    #cloudinary details
+    cloudinary_cloud_name: str
+    cloudinary_api_key: str
+    cloudinary_api_secret: str
+
 settings = Settings()
