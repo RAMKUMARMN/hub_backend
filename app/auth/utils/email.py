@@ -22,6 +22,17 @@ async def send_email(to: str, subject: str, body: str) -> None:
 
     html_body = f"<p>{body.replace(chr(10), '<br>')}</p>"
 
+    # Always print notification directly to terminal console for ease of local testing/registration
+    print(
+        "\n"
+        "=================== [DEVELOPMENT NOTIFICATION PRINT] ===================\n"
+        f"TO:      {to}\n"
+        f"SUBJECT: {subject}\n"
+        "BODY:\n"
+        f"{body}\n"
+        "========================================================\n"
+    )
+
     payload = {
         "channel": "email",
         "recipient": to,

@@ -21,9 +21,7 @@ from app.models.document import Document
 from app.models.chat import ChatSession
 from app.models.user import User
 from app.schemas.document import DocumentResponse
-from app.services.document_service import extract_text
 from app.services.storage_service import delete_file, save_file
-from app.services.vector_service import delete_document_vectors, store_document_vectors
 from app.config import settings
 
 from app.ai.client import AIClient, get_ai_client
@@ -151,14 +149,7 @@ async def _process_document(
             if not doc:
                 return
 
-            # TODO:
-            # storage_path now contains a Cloudinary URL.
-            # AI extraction service must support URL-based retrieval.
-            text = await extract_text(storage_path, doc.file_type)
-            
-            # Extract plain text from the physical file.
-            #absolute_path = str(UPLOAD_DIR.resolve() / storage_path)
-            #text = await ai_client.extract_text(absolute_path, doc.file_type)
+            text = await ai_client.extract_text(storage_path, doc.file_type)
 
             if not text.strip():
                 logger.warning(

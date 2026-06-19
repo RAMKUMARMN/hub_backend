@@ -18,10 +18,22 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
 ## Setup Instructions
 
 1. **Create and activate a virtual environment:**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+   * **Linux/macOS:**
+     ```bash
+     python3 -m venv venv
+     source venv/bin/activate
+     ```
+   * **Windows (Command Prompt):**
+     ```cmd
+     python -m venv venv
+     venv\Scripts\activate.bat
+     ```
+   * **Windows (PowerShell):**
+     ```powershell
+     python -m venv venv
+     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+     .\venv\Scripts\Activate.ps1
+     ```
 
 2. **Install dependencies:**
    ```bash
@@ -112,9 +124,14 @@ Make sure your databases and helper services are active on your local device. If
 Since you are running Linux, the default configuration uses **Host Networking** (`network_mode: "host"`). This connects the container directly to your host's loopback interface (`localhost`) without extra port mappings.
 
 1. **Copy the Docker environment template:**
-   ```bash
-   cp .env.docker .env
-   ```
+   * **Linux/macOS/Git Bash:**
+     ```bash
+     cp .env.docker .env
+     ```
+   * **Windows (CMD):**
+     ```cmd
+     copy .env.docker .env
+     ```
 2. **Start the backend container:**
    ```bash
    docker compose up --build
