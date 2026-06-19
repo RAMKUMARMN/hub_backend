@@ -85,6 +85,11 @@ jobs:
           load: true
           tags: smarthub-backend:ci
 
+      - name: Copy .env.docker.example to .env.docker
+        run: cp .env.docker.example .env.docker
+
       - name: Test Docker image
         run: |
-          docker run --rm smarthub-backend:ci python -c "import main; print('OK')"
+          docker run --rm \
+            --env-file .env.docker \
+            smarthub-backend:ci python -c "import main; print('OK')"
