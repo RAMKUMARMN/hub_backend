@@ -2,13 +2,13 @@
 Chat router — /api/v1/chat/*
 
 Integrations:
-  - Ollama LLM (streaming via /api/chat, direct HTTP)
-  - Qdrant vector search (via vector_service.search_relevant_chunks)
+  - LLM streaming via app.ai (Ollama under the hood)
+  - Qdrant vector search (via app.ai.search_relevant_chunks)
   - Source citations: first SSE event when use_rag=True
   - DeepSeek-R1 thinking stream: tokens inside <think>...</think> are streamed
     with {"thinking": token} instead of {"delta": token}
   - Context window summarization: once a session exceeds 10 messages, a
-    background task asks Ollama to summarize history. Older messages are
+    background task asks the LLM to summarize history. Older messages are
     replaced with the summary injected into the system prompt.
   - Full chat history is persisted in PostgreSQL (chat_messages table).
 """
@@ -24,7 +24,6 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.chat import ChatMessage, ChatSession
@@ -36,7 +35,7 @@ from app.schemas.chat import (
     SendMessageRequest,
     SessionResponse,
 )
-from app.services.vector_service import search_relevant_chunks
+from app.ai.client import AIClient, get_ai_client
 
 logger = logging.getLogger(__name__)
 
@@ -118,27 +117,30 @@ async def get_messages(
 # Context-window summarization background task
 # ---------------------------------------------------------------------------
 
-async def _summarize_and_prune(session_id: uuid.UUID) -> None:
+async def _summarize_and_prune(session_id: uuid.UUID, ai_client: AIClient) -> None:
     """
     Background task: triggered when a session exceeds 10 messages.
 
     1. Fetches all but the last 4 messages.
-    2. Asks Ollama to produce a 3-sentence summary of the older messages.
+    2. Asks the LLM to produce a 3-sentence summary of the older messages.
     3. Stores the summary in ChatSession.summary.
     4. Deletes the older messages to keep the database lean.
     """
     async with AsyncSessionLocal() as db:
         try:
-            # Fetch all messages ordered by time.
-            all_msgs_result = await db.execute(
+            # Fetch only active (unsummarized) messages ordered by time.
+            active_msgs_result = await db.execute(
                 select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.is_summarized == False
+                )
                 .order_by(ChatMessage.created_at.asc())
             )
-            all_msgs = all_msgs_result.scalars().all()
+            active_msgs = active_msgs_result.scalars().all()
 
-            # Keep the last 4 messages; summarize the rest.
-            to_summarize = all_msgs[:-4]
+            # Keep the last 4 active messages; summarize the rest.
+            to_summarize = active_msgs[:-4]
             if not to_summarize:
                 return
 
@@ -146,35 +148,27 @@ async def _summarize_and_prune(session_id: uuid.UUID) -> None:
                 f"{m.role.upper()}: {m.content}" for m in to_summarize
             )
 
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    f"{settings.ollama_base_url}/api/generate",
-                    json={
-                        "model": settings.ollama_model,
-                        "prompt": (
-                            "Summarize the following conversation in 3 concise sentences. "
-                            "Focus on the main topics and key conclusions discussed:\n\n"
-                            f"{history_text}"
-                        ),
-                        "stream": False,
-                    },
-                )
-                resp.raise_for_status()
-                summary_text = resp.json().get("response", "").strip()
-
-            # Save the summary into the session row.
+            # Retrieve previous summary to merge if it exists
             sess_result = await db.execute(
                 select(ChatSession).where(ChatSession.id == session_id)
             )
             session = sess_result.scalar_one_or_none()
+
+            if session and session.summary:
+                merge_text = (
+                    f"Previous conversation summary: {session.summary}\n\n"
+                    f"New conversation segment:\n{history_text}"
+                )
+                summary_text = await ai_client.summarize_text(merge_text)
+            else:
+                summary_text = await ai_client.summarize_text(history_text)
+
+            # Save the new rolling summary and mark messages as summarized
             if session and summary_text:
                 session.summary = summary_text
+                for msg in to_summarize:
+                    msg.is_summarized = True
                 await db.commit()
-
-            # Delete the old messages that are now captured in the summary.
-            for msg in to_summarize:
-                await db.delete(msg)
-            await db.commit()
 
             logger.info(
                 "Summarized and pruned %d messages for session %s.",
@@ -201,6 +195,7 @@ async def send_message(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
 ):
     """
     Send a user message and stream the AI response as Server-Sent Events.
@@ -228,10 +223,13 @@ async def send_message(
     db.add(user_msg)
     await db.commit()
 
-    # 3. Build chat history: last 10 messages (oldest first).
+    # 3. Build chat history: last 10 messages (oldest first) that are not summarized.
     history_result = await db.execute(
         select(ChatMessage)
-        .where(ChatMessage.session_id == session_id)
+        .where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.is_summarized == False
+        )
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     )
@@ -240,9 +238,12 @@ async def send_message(
         for m in reversed(history_result.scalars().all())
     ]
 
-    # 4. Count total messages to decide if summarization should be triggered.
+    # 4. Count active (unsummarized) messages to decide if summarization should be triggered.
     msg_count_result = await db.execute(
-        select(func.count()).where(ChatMessage.session_id == session_id)
+        select(func.count()).where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.is_summarized == False
+        )
     )
     total_msg_count = msg_count_result.scalar_one()
 
@@ -273,7 +274,7 @@ async def send_message(
             )
             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
 
-            matching_data = await search_relevant_chunks(
+            matching_data = await ai_client.search_relevant_chunks(
                 user_id=current_user.id,
                 query=body.content,
                 limit=4,
@@ -306,7 +307,7 @@ async def send_message(
             "\n\nRespond directly. Do not output any reasoning or step-by-step thinking, and do not use <think> tags."
         )
 
-    # 7. Assemble the full message list for Ollama.
+    # 7. Assemble the full message list for the LLM.
     ollama_messages = [
         {"role": "system", "content": system_instruction}
     ] + chat_history
@@ -322,47 +323,26 @@ async def send_message(
         if matching_data:
             yield f"data: {json.dumps({'sources': matching_data})}\n\n"
 
-        # B. Stream tokens directly from local Ollama /api/chat endpoint.
+        # B. Stream tokens from the AI module.
         is_thinking = False
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.ollama_base_url}/api/chat",
-                    json={
-                        "model": settings.ollama_model,
-                        "messages": ollama_messages,
-                        "stream": True,
-                    },
-                ) as response:
-                    response.raise_for_status()
+            async for token in ai_client.chat_stream(ollama_messages):
+                # Detect DeepSeek-R1 <think> reasoning block boundaries.
+                if "<think>" in token:
+                    is_thinking = True
+                    token = token.replace("<think>", "")
+                if "</think>" in token:
+                    is_thinking = False
+                    token = token.replace("</think>", "")
 
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        try:
-                            parsed = json.loads(line)
-                            token: str = parsed.get("message", {}).get("content", "")
-
-                            # Detect DeepSeek-R1 <think> reasoning block boundaries.
-                            if "<think>" in token:
-                                is_thinking = True
-                                token = token.replace("<think>", "")
-                            if "</think>" in token:
-                                is_thinking = False
-                                token = token.replace("</think>", "")
-
-                            if token:
-                                full_response += token
-                                if is_thinking:
-                                    # Stream thinking tokens with a separate key so
-                                    # the frontend can render them differently.
-                                    yield f"data: {json.dumps({'thinking': token})}\n\n"
-                                else:
-                                    yield f"data: {json.dumps({'delta': token})}\n\n"
-
-                        except (json.JSONDecodeError, KeyError):
-                            continue
+                if token:
+                    full_response += token
+                    if is_thinking:
+                        # Stream thinking tokens with a separate key so
+                        # the frontend can render them differently.
+                        yield f"data: {json.dumps({'thinking': token})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'delta': token})}\n\n"
 
         except httpx.ConnectError:
             error_msg = (
@@ -390,6 +370,6 @@ async def send_message(
 
     # 8. After streaming, schedule summarization if the session has grown long.
     if total_msg_count > 10:
-        background_tasks.add_task(_summarize_and_prune, _session_id)
+        background_tasks.add_task(_summarize_and_prune, _session_id, ai_client)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

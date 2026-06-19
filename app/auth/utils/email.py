@@ -5,8 +5,6 @@ Person 4 (OTP & Password Recovery) owns this file.
 Uses SMTP settings from app.config.settings.
 """
 import logging
-from email.message import EmailMessage
-import aiosmtplib
 
 from app.config import settings
 
@@ -15,34 +13,54 @@ logger = logging.getLogger(__name__)
 
 async def send_email(to: str, subject: str, body: str) -> None:
     """
-    Send a plain-text email using SMTP.
-    Falls back to logger output if the SMTP connection is refused (common in dev/test).
+    Send a plain-text email by calling the notification service on port 8001.
+    Falls back to logger output if the service is unavailable.
     """
-    msg = EmailMessage()
-    msg["From"] = settings.smtp_from_email
-    msg["To"] = to
-    msg["Subject"] = subject
-    msg.set_content(body)
+    import httpx
+    from datetime import datetime, timedelta, timezone
+    from jose import jwt
+
+    html_body = f"<p>{body.replace(chr(10), '<br>')}</p>"
+
+    payload = {
+        "channel": "email",
+        "recipient": to,
+        "subject": subject,
+        "body": body,
+        "html_body": html_body,
+        "title": subject,
+        "data": {},
+        "scheduled_at": None,
+    }
+
+    # Generate HS256 JWT token for authorization
+    token_payload = {
+        "sub": "backend-otp-service",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+    }
+    token = jwt.encode(token_payload, settings.secret_key, algorithm=settings.algorithm)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    url = settings.notification_service_url
 
     try:
-        async with aiosmtplib.SMTP(hostname=settings.smtp_host, port=settings.smtp_port) as smtp:
-            await smtp.send_message(msg)
-        logger.info("Email sent successfully to %s: Subject '%s'", to, subject)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, json=payload, headers=headers, timeout=10.0)
+            response.raise_for_status()
+        logger.info("Email successfully sent via notification service to %s: Subject '%s'", to, subject)
     except Exception as e:
         logger.warning(
-            "SMTP transmission failed. Falling back to log print. Details: %s", e
+            "Notification service transmission failed. Falling back to log print. Details: %s", e
         )
         logger.info(
             "\n"
-            "=================== [EMAIL LOG MOCK] ===================\n"
+            "=================== [NOTIFICATION SERVICE MOCK] ===================\n"
             "TO:      %s\n"
-            "FROM:    %s\n"
             "SUBJECT: %s\n"
             "BODY:\n"
             "%s\n"
             "========================================================",
             to,
-            settings.smtp_from_email,
             subject,
             body,
         )

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from app.services.vector_service import (
+from app.ai.services.vector_service import (
     delete_document_vectors,
     search_relevant_chunks,
     store_document_vectors,

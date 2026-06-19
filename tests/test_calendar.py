@@ -26,11 +26,17 @@ async def client():
 @pytest_asyncio.fixture(autouse=True)
 async def clean_database():
     from app.database import engine
+    from app.redis import redis_client
     await engine.dispose()
+    try:
+        await redis_client.aclose()
+    except Exception:
+        pass
     async with AsyncSessionLocal() as session:
         await session.execute(text("TRUNCATE TABLE users, todos, calendar_events CASCADE;"))
         await session.commit()
     yield
+
 
 @pytest_asyncio.fixture
 async def seed_user():
@@ -264,3 +270,30 @@ async def test_delete_calendar_event(client, auth_headers):
 
     get_resp = await client.get(f"/api/v1/calendar/events/{event_id}", headers=auth_headers)
     assert get_resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_google_calendar_sync(client, auth_headers):
+    # Verify sync works and returns success
+    response = await client.post("/api/v1/calendar/sync/google", headers=auth_headers)
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["status"] == "success"
+    assert "last_sync" in data
+    assert data["imported_count"] == 1
+
+    # Verify status is now synced
+    status_response = await client.get("/api/v1/calendar/sync/status", headers=auth_headers)
+    assert status_response.status_code == status.HTTP_200_OK
+    assert status_response.json()["status"] == "synced"
+    assert status_response.json()["last_sync"] == data["last_sync"]
+
+
+@pytest.mark.asyncio
+async def test_google_calendar_sync_status_never_synced(client, auth_headers):
+    # Status before syncing should return never_synced
+    status_response = await client.get("/api/v1/calendar/sync/status", headers=auth_headers)
+    assert status_response.status_code == status.HTTP_200_OK
+    assert status_response.json()["status"] == "never_synced"
+    assert status_response.json()["last_sync"] is None
+

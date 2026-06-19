@@ -37,4 +37,3 @@ async def extract_text(file_path: str, file_type: str) -> str:
         )
         response.raise_for_status()
         return response.json()["text"]
-

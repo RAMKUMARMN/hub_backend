@@ -10,6 +10,7 @@ class DocumentResponse(BaseModel):
     filename: str
     file_type: str
     file_size: int
+    version: int
     processed: bool
     created_at: datetime
 

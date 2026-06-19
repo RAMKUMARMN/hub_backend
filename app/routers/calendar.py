@@ -70,4 +70,22 @@ async def delete_event(
 
     await invalidate_dashboard_cache(current_user.id)
 
-  
+
+# Sync endpoints
+from app.services.calendar_sync_service import CalendarSyncService
+
+
+@router.post("/sync/google")
+async def sync_google_calendar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    return await CalendarSyncService(db).sync_with_google(current_user.id)
+
+
+@router.get("/sync/status")
+async def get_sync_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    return await CalendarSyncService(db).get_sync_status(current_user.id)

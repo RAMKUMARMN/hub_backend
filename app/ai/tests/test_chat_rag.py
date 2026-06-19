@@ -123,7 +123,7 @@ async def test_create_and_list_sessions(authenticated_client):
     assert sessions[0]["id"] == session_id
 
 @pytest.mark.asyncio
-@patch("app.routers.chat.httpx.AsyncClient.stream")
+@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
 async def test_send_message_stream(mock_stream_post, authenticated_client):
     resp = await authenticated_client.post(
         "/api/v1/chat/sessions",
@@ -176,8 +176,8 @@ async def test_send_message_stream(mock_stream_post, authenticated_client):
 
 @pytest.mark.asyncio
 @patch("app.routers.documents.save_file")
-@patch("app.routers.documents.extract_text")
-@patch("app.routers.documents.store_document_vectors")
+@patch("app.ai.local_client.LocalAIClient.extract_text")
+@patch("app.ai.local_client.LocalAIClient.store_document_vectors")
 async def test_upload_document(mock_store, mock_extract, mock_save, authenticated_client):
     mock_save.return_value = "documents/test_user/test.txt"
     mock_extract.return_value = "This is a test document content for RAG."
@@ -194,7 +194,7 @@ async def test_upload_document(mock_store, mock_extract, mock_save, authenticate
     assert data["processed"] is False
 
 @pytest.mark.asyncio
-@patch("app.routers.documents.extract_text")
+@patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_client, setup_qdrant_test_collection):
     """
     Performs a live end-to-end integration test of the RAG pipeline.
@@ -268,7 +268,7 @@ async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_cli
 
 
 @pytest.mark.asyncio
-@patch("app.routers.documents.extract_text")
+@patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_session_scoped_rag_isolation(
     mock_extract,
     authenticated_client,
@@ -399,7 +399,7 @@ async def test_session_scoped_rag_isolation(
 
 
 @pytest.mark.asyncio
-@patch("app.routers.chat.httpx.AsyncClient.stream")
+@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
 async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
     """
     Verifies that the thinking_mode query parameter is accepted by the schema
@@ -452,7 +452,7 @@ async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collectio
     Verifies that search_relevant_chunks prioritizes documents belonging to
     the current session over global documents when scores are equal.
     """
-    from app.services.vector_service import store_document_vectors, search_relevant_chunks
+    from app.ai import store_document_vectors, search_relevant_chunks
     user_id = uuid.uuid4()
     session_id = uuid.uuid4()
     
@@ -489,7 +489,7 @@ async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collectio
 
 
 @pytest.mark.asyncio
-@patch("app.routers.documents.extract_text")
+@patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_api_rag_prioritization(
     mock_extract,
     authenticated_client,
@@ -564,7 +564,7 @@ async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_
     Verifies that search_relevant_chunks prioritizes documents whose filename contains
     keywords from the query, using the +0.20 boost.
     """
-    from app.services.vector_service import store_document_vectors, search_relevant_chunks
+    from app.ai import store_document_vectors, search_relevant_chunks
     user_id = uuid.uuid4()
     
     random_doc_id = uuid.uuid4()
@@ -596,7 +596,3 @@ async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_
     assert len(results) == 2
     assert results[0]["filename"] == "resume_johndoe.pdf"
     assert results[1]["filename"] == "random_notes.txt"
-
-
-
-
