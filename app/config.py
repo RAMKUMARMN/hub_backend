@@ -20,19 +20,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
-    # Ollama (accessed via the AI service in full-stack; kept here for direct dev)
+    # AI / LLM Configuration
+    use_remote_ai: bool = False
+    ai_service_url: str = "http://localhost:8003"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     ollama_embed_model: str = "nomic-embed-text"
-
-    # AI Service — handles LLM, RAG, document extraction
-    ai_service_url: str = "http://localhost:8003"
-
-    # ChromaDB (legacy — replaced by Qdrant)
-    chroma_host: str = "localhost"
-    chroma_port: int = 8002
-
-    # Qdrant Vector Database
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "user_documents"
 

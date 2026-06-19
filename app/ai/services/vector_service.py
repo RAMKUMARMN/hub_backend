@@ -27,6 +27,7 @@ from qdrant_client.models import (
     TextIndexParams,
     TokenizerType,
     VectorParams,
+    PayloadSchemaType,
 )
 
 from app.config import settings
@@ -75,6 +76,19 @@ async def init_qdrant_collection() -> None:
                 ),
             )
             logger.info("Full-text payload index created on 'text' field.")
+
+            # Create payload indexes on user_id and session_id for multi-tenant isolation.
+            await qdrant_client.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name="user_id",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            await qdrant_client.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name="session_id",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+            logger.info("Payload indexes created on 'user_id' and 'session_id' fields.")
         else:
             logger.info("Qdrant collection '%s' already exists.", settings.qdrant_collection)
     except Exception as exc:
@@ -90,7 +104,7 @@ async def init_qdrant_collection() -> None:
 # Embedding
 # ---------------------------------------------------------------------------
 
-async def get_ollama_embedding(text: str) -> list[float]:
+async def get_ollama_embedding(text: str, prefix_type: str | None = None) -> list[float]:
     """
     Generate a 768-dimensional text embedding using Ollama's nomic-embed-text model.
 
@@ -99,12 +113,20 @@ async def get_ollama_embedding(text: str) -> list[float]:
 
     Raises httpx.HTTPStatusError on non-2xx responses.
     """
+    prefix = ""
+    if prefix_type == "query":
+        prefix = "search_query: "
+    elif prefix_type == "document":
+        prefix = "search_document: "
+
+    formatted_text = prefix + text
+
     async with httpx.AsyncClient(timeout=60) as client:
         response = await client.post(
             f"{settings.ollama_base_url}/api/embeddings",
             json={
                 "model": settings.ollama_embed_model,
-                "prompt": text,
+                "prompt": formatted_text,
             },
         )
         response.raise_for_status()
@@ -115,6 +137,29 @@ async def get_ollama_embedding(text: str) -> list[float]:
 # Chunking
 # ---------------------------------------------------------------------------
 
+def get_clean_overlap(chunk: str, overlap: int) -> str:
+    if not chunk or overlap <= 0:
+        return ""
+    raw = chunk[-overlap:] if len(chunk) > overlap else chunk
+    if len(chunk) > overlap:
+        char_before = chunk[-overlap - 1]
+        if char_before not in (" ", "\n") and raw[0] not in (" ", "\n"):
+            idx = -1
+            first_space = raw.find(" ")
+            first_newline = raw.find("\n")
+            if first_space != -1 and first_newline != -1:
+                idx = min(first_space, first_newline)
+            elif first_space != -1:
+                idx = first_space
+            elif first_newline != -1:
+                idx = first_newline
+            
+            if idx != -1:
+                raw = raw[idx + 1:]
+            else:
+                raw = ""
+    return raw
+
 def chunk_text(
     text: str,
     chunk_size: int = 800,
@@ -124,10 +169,9 @@ def chunk_text(
     Paragraph-aware text chunker.
 
     Splits the document on blank-line paragraph boundaries first so that
-    headings, code blocks, and lists are never cut in half.  Whenever the
-    accumulated paragraph group exceeds chunk_size characters it is flushed
-    as a chunk and the last `overlap` characters are carried forward so that
-    consecutive chunks share context.
+    headings, code blocks, and lists are never cut in half. If an individual
+    paragraph exceeds chunk_size, it is recursively split into sentences to
+    prevent oversized chunks.
     """
     paragraphs = text.split("\n\n")
     chunks: list[str] = []
@@ -138,12 +182,45 @@ def chunk_text(
         if not para:
             continue
 
-        if len(current_chunk) + len(para) + 2 > chunk_size and current_chunk:
-            chunks.append(current_chunk.strip())
-            # Carry the tail of the previous chunk forward for context overlap.
-            current_chunk = current_chunk[-overlap:] if len(current_chunk) > overlap else ""
+        # If a single paragraph is larger than chunk_size, recursively split it
+        if len(para) > chunk_size:
+            # Flush the current chunk first if it exists
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = get_clean_overlap(current_chunk, overlap)
 
-        current_chunk += ("\n\n" + para if current_chunk else para)
+            # Split the long paragraph into sentences (preserving punctuation)
+            sentences = re.split(r"(?<=[.!?])\s+", para)
+            
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if not sentence:
+                    continue
+
+                # If a single sentence is larger than chunk_size, split by words
+                if len(sentence) > chunk_size:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                        current_chunk = ""
+                    
+                    words = sentence.split(" ")
+                    for word in words:
+                        if not word:
+                            continue
+                        if len(current_chunk) + len(word) + 1 > chunk_size and current_chunk:
+                            chunks.append(current_chunk.strip())
+                            current_chunk = get_clean_overlap(current_chunk, overlap)
+                        current_chunk += (" " + word if current_chunk else word)
+                else:
+                    if len(current_chunk) + len(sentence) + 1 > chunk_size and current_chunk:
+                        chunks.append(current_chunk.strip())
+                        current_chunk = get_clean_overlap(current_chunk, overlap)
+                    current_chunk += (" " + sentence if current_chunk else sentence)
+        else:
+            if len(current_chunk) + len(para) + 2 > chunk_size and current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = get_clean_overlap(current_chunk, overlap)
+            current_chunk += ("\n\n" + para if current_chunk else para)
 
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
@@ -182,7 +259,7 @@ async def store_document_vectors(
 
     points: list[PointStruct] = []
     for idx, chunk in enumerate(chunks):
-        embedding = await get_ollama_embedding(chunk)
+        embedding = await get_ollama_embedding(chunk, prefix_type="document")
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
@@ -238,7 +315,7 @@ async def search_relevant_chunks(
     if allowed_document_ids is not None and not allowed_document_ids:
         return []
 
-    query_vector = await get_ollama_embedding(query)
+    query_vector = await get_ollama_embedding(query, prefix_type="query")
 
     must_conditions = [
         FieldCondition(

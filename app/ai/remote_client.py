@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+import uuid
+import httpx
+from typing import AsyncIterator
+
+from app.ai.client import AIClient
+from app.config import settings
+
+class RemoteAIClient(AIClient):
+    """
+    Remote implementation of AIClient that proxies all AI requests via HTTP
+    to a separate AI microservice (settings.ai_service_url).
+    """
+
+    def _get_client(self, timeout: float = 60.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(base_url=settings.ai_service_url, timeout=timeout)
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+    ) -> AsyncIterator[str]:
+        async with self._get_client(timeout=120.0) as client:
+            async with client.stream("POST", "/api/v1/chat/stream", json={"messages": messages}) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            payload = json.loads(data_str)
+                            token = payload.get("delta") or payload.get("thinking") or ""
+                            if token:
+                                yield token
+                        except json.JSONDecodeError:
+                            pass
+
+    async def summarize_text(
+        self,
+        text: str,
+    ) -> str:
+        async with self._get_client() as client:
+            response = await client.post("/api/v1/chat/summarize", json={"text": text})
+            response.raise_for_status()
+            return response.json()["summary"]
+
+    async def get_embedding(
+        self,
+        text: str,
+    ) -> list[float]:
+        async with self._get_client() as client:
+            response = await client.post("/api/v1/embeddings", json={"text": text})
+            response.raise_for_status()
+            return response.json()["embedding"]
+
+    async def store_document_vectors(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        text: str,
+        filename: str = "",
+        session_id: uuid.UUID | None = None,
+    ) -> int:
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/documents/ingest",
+                json={
+                    "user_id": str(user_id),
+                    "document_id": str(document_id),
+                    "text": text,
+                    "filename": filename,
+                    "session_id": str(session_id) if session_id else None,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["chunks_stored"]
+
+    async def search_relevant_chunks(
+        self,
+        user_id: uuid.UUID,
+        query: str,
+        limit: int = 4,
+        allowed_document_ids: list[uuid.UUID] | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> list[dict]:
+        async with self._get_client() as client:
+            response = await client.post(
+                "/api/v1/documents/search",
+                json={
+                    "user_id": str(user_id),
+                    "query": query,
+                    "limit": limit,
+                    "allowed_document_ids": [str(d) for d in allowed_document_ids] if allowed_document_ids else None,
+                    "session_id": str(session_id) if session_id else None,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["results"]
+
+    async def delete_document_vectors(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> None:
+        async with self._get_client() as client:
+            response = await client.request(
+                "DELETE",
+                f"/api/v1/documents/{document_id}",
+                params={"user_id": str(user_id)},
+            )
+            response.raise_for_status()
+
+    async def extract_text(
+        self,
+        file_path: str,
+        file_type: str,
+    ) -> str:
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/extract",
+                json={"file_path": file_path, "file_type": file_type},
+            )
+            response.raise_for_status()
+            return response.json()["text"]
