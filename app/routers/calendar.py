@@ -7,6 +7,7 @@ from app.auth.security.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.calendar import CreateCalendarEventRequest, UpdateCalendarEventRequest, CalendarEventResponse
 from app.services.calendar_service import CalendarService
+from app.services.dashboard_service import invalidate_dashboard_cache
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
 
@@ -16,7 +17,11 @@ async def create_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await CalendarService(db).create_event(current_user.id, body)
+    event = await CalendarService(db).create_event(current_user.id, body)
+
+    await invalidate_dashboard_cache(current_user.id)
+
+    return event
 
 @router.get("/events", response_model=list[CalendarEventResponse])
 async def list_events(
@@ -42,7 +47,15 @@ async def update_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await CalendarService(db).update_event(event_id, current_user.id, body)
+    event = await CalendarService(db).update_event(
+        event_id,
+        current_user.id,
+        body
+    )
+
+    await invalidate_dashboard_cache(current_user.id)
+
+    return event
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_event(
@@ -50,4 +63,11 @@ async def delete_event(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    await CalendarService(db).delete_event(event_id, current_user.id)
+    await CalendarService(db).delete_event(
+        event_id,
+        current_user.id
+    )
+
+    await invalidate_dashboard_cache(current_user.id)
+
+  

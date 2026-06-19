@@ -1,6 +1,7 @@
 """Todos router — /api/v1/todos/*"""
 import uuid
 
+from app.services.dashboard_service import invalidate_dashboard_cache
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,8 @@ async def create_todo(
         except Exception:
             pass
 
+    await invalidate_dashboard_cache(current_user.id)
+
     return todo
 
 
@@ -103,6 +106,9 @@ async def update_todo(
 
     await db.commit()
     await db.refresh(todo)
+   
+    await invalidate_dashboard_cache(current_user.id)
+   
     return todo
 
 
@@ -122,6 +128,9 @@ async def toggle_complete(
     todo.completed = body.completed
     await db.commit()
     await db.refresh(todo)
+    
+    await invalidate_dashboard_cache(current_user.id)
+    
     return todo
 
 
@@ -139,3 +148,5 @@ async def delete_todo(
         raise HTTPException(status_code=404, detail="Todo not found")
     await db.delete(todo)
     await db.commit()
+    
+    await invalidate_dashboard_cache(current_user.id)
