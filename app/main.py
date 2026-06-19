@@ -22,6 +22,8 @@ from app.routers import (
     preferences_router,
     system_router,
     roles_router,
+    notes_router,
+    folders_router,
 )
 
 @asynccontextmanager
@@ -77,6 +79,8 @@ app.include_router(admin_router, prefix=PREFIX)
 app.include_router(oauth_router, prefix=PREFIX)
 app.include_router(focus_router, prefix=PREFIX)
 app.include_router(calendar_router, prefix=PREFIX)
+app.include_router(notes_router, prefix=PREFIX)
+app.include_router(folders_router, prefix=PREFIX)
 
 app.include_router(preferences_router, prefix=PREFIX)
 app.include_router(system_router, prefix=PREFIX)
