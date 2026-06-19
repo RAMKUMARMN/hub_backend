@@ -128,16 +128,19 @@ async def _summarize_and_prune(session_id: uuid.UUID, ai_client: AIClient) -> No
     """
     async with AsyncSessionLocal() as db:
         try:
-            # Fetch all messages ordered by time.
-            all_msgs_result = await db.execute(
+            # Fetch only active (unsummarized) messages ordered by time.
+            active_msgs_result = await db.execute(
                 select(ChatMessage)
-                .where(ChatMessage.session_id == session_id)
+                .where(
+                    ChatMessage.session_id == session_id,
+                    ChatMessage.is_summarized == False
+                )
                 .order_by(ChatMessage.created_at.asc())
             )
-            all_msgs = all_msgs_result.scalars().all()
+            active_msgs = active_msgs_result.scalars().all()
 
-            # Keep the last 4 messages; summarize the rest.
-            to_summarize = all_msgs[:-4]
+            # Keep the last 4 active messages; summarize the rest.
+            to_summarize = active_msgs[:-4]
             if not to_summarize:
                 return
 
@@ -145,21 +148,27 @@ async def _summarize_and_prune(session_id: uuid.UUID, ai_client: AIClient) -> No
                 f"{m.role.upper()}: {m.content}" for m in to_summarize
             )
 
-            summary_text = await ai_client.summarize_text(history_text)
-
-            # Save the summary into the session row.
+            # Retrieve previous summary to merge if it exists
             sess_result = await db.execute(
                 select(ChatSession).where(ChatSession.id == session_id)
             )
             session = sess_result.scalar_one_or_none()
+
+            if session and session.summary:
+                merge_text = (
+                    f"Previous conversation summary: {session.summary}\n\n"
+                    f"New conversation segment:\n{history_text}"
+                )
+                summary_text = await ai_client.summarize_text(merge_text)
+            else:
+                summary_text = await ai_client.summarize_text(history_text)
+
+            # Save the new rolling summary and mark messages as summarized
             if session and summary_text:
                 session.summary = summary_text
+                for msg in to_summarize:
+                    msg.is_summarized = True
                 await db.commit()
-
-            # Delete the old messages that are now captured in the summary.
-            for msg in to_summarize:
-                await db.delete(msg)
-            await db.commit()
 
             logger.info(
                 "Summarized and pruned %d messages for session %s.",
@@ -214,10 +223,13 @@ async def send_message(
     db.add(user_msg)
     await db.commit()
 
-    # 3. Build chat history: last 10 messages (oldest first).
+    # 3. Build chat history: last 10 messages (oldest first) that are not summarized.
     history_result = await db.execute(
         select(ChatMessage)
-        .where(ChatMessage.session_id == session_id)
+        .where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.is_summarized == False
+        )
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     )
@@ -226,9 +238,12 @@ async def send_message(
         for m in reversed(history_result.scalars().all())
     ]
 
-    # 4. Count total messages to decide if summarization should be triggered.
+    # 4. Count active (unsummarized) messages to decide if summarization should be triggered.
     msg_count_result = await db.execute(
-        select(func.count()).where(ChatMessage.session_id == session_id)
+        select(func.count()).where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.is_summarized == False
+        )
     )
     total_msg_count = msg_count_result.scalar_one()
 
