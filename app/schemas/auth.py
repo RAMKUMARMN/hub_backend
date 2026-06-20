@@ -9,11 +9,25 @@ class RegisterRequest(BaseModel):
     password: str
     full_name: str
     phone: str | None = None
+    otp:str
+class PhoneRequest(BaseModel):
+    phone: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordConfirm(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+class OtpVerifyRequest(BaseModel):
+    phone: str
+    otp: str
 
 
 class TokenResponse(BaseModel):
