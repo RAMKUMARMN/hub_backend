@@ -13,13 +13,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^latest",
-    "zod": "^latest"
+    "@modelcontextprotocol/sdk": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
-    "@types/node": "^latest",
-    "ts-node": "^latest",
-    "typescript": "^latest"
+    "@types/node": "latest",
+    "ts-node": "latest",
+    "typescript": "latest"
   }
 }
 
