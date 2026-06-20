@@ -4,7 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.services.scheduler import start_scheduler
 from app.database import engine
+from app.routers.websocket import router as websocket_router
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.routers import (
     admin_router,
@@ -13,14 +15,17 @@ from app.routers import (
     documents_router,
     poll_router,
     todos_router,
+    notification_router
 )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: can run DB migrations check here if needed
+    start_scheduler()
+
     yield
-    # Shutdown: close DB connections
+
+    stop_scheduler()
     await engine.dispose()
 
 
@@ -52,8 +57,11 @@ app.include_router(documents_router, prefix=PREFIX)
 app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
-
+app.include_router(notification_router, prefix=PREFIX)
+print("REGISTERING WEBSOCKET ROUTER")
+app.include_router(websocket_router)
 
 @app.get("/api/v1/health", tags=["health"])
 async def health():
     return {"status": "ok", "service": "cixiohub-backend"}
+
