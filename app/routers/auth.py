@@ -14,6 +14,9 @@ import httpx
 from app.database import get_db 
 from app.db.redis import redis_client
 
+import httpx
+from app.config import settings
+from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.auth import (
@@ -61,6 +64,40 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     await db.refresh(user)
     
     # Generate tokens immediately upon registration
+    try:
+        async with httpx.AsyncClient(
+        base_url=settings.notify_service_url,
+        timeout=30,
+         ) as client:
+                    await client.post(
+            "/api/v1/notify/send",
+            json={
+                "channel": "email",
+                "recipient": user.email,
+                "subject": "Welcome to CixioHub",
+                "body": f"Hello {user.full_name}, welcome to CixioHub!",
+            },
+        )
+    except Exception:
+         pass
+    return user
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Authenticate and return JWT tokens.
+
+    TODO:
+      1. Look up user by email.
+      2. Verify password with verify_password().
+      3. Return access + refresh tokens.
+    """
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
     token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
     
     return TokenResponse(

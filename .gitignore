@@ -4,3 +4,8 @@ __pycache__/
 # Ignore the uploads directory
 uploads/
 .env
+
+node_modules/
+**/node_modules/
+dist/
+.vscode/

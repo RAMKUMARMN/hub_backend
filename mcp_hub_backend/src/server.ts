@@ -11,6 +11,7 @@ import { discoverServicesHandler } from "./tools/discoverServices.js";
 import { discoverDatabaseConfigHandler } from "./tools/discoverDatabaseConfig.js";
 import { findFeatureHandler } from "./tools/findFeature.js";
 
+
 const server = new McpServer({
   name: "hub-backend-mcp",
   version: "1.0.0",

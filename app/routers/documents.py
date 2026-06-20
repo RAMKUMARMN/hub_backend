@@ -5,7 +5,7 @@ Students: implement the upload endpoint to trigger async text extraction + RAG i
 """
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,8 @@ from app.schemas.document import DocumentResponse
 from app.services.document_service import extract_text
 from app.services.rag_service import delete_document_chunks, ingest_document
 from app.services.storage_service import UPLOAD_DIR, delete_file, save_file
+from app.queue.producer import publish_job
+from app.queue.schemas import Job, JobType
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -34,7 +36,6 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 @router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_document(
     file: UploadFile,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -65,7 +66,20 @@ async def upload_document(
     await db.refresh(doc)
 
     # Process in background so we return immediately
-    background_tasks.add_task(_process_document, doc.id, storage_path, current_user.id)
+    job = Job(
+        job_type=JobType.RAG_BULK_INGEST,
+        queue="rag.bulk_ingest",
+        label=f"Process {file.filename}",
+        payload={
+            "document_id": str(doc.id),
+            "user_id": str(current_user.id),
+            "storage_path": storage_path,
+            "file_type": file_type,
+            "filename": file.filename,
+        },
+    )
+
+    await publish_job(job)
 
     return doc
 
@@ -73,7 +87,7 @@ async def upload_document(
 async def _process_document(
     document_id: uuid.UUID, storage_path: str, user_id: uuid.UUID
 ) -> None:
-    """Background task: extract text and ingest into ChromaDB."""
+    
     from app.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
