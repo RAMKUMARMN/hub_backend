@@ -64,6 +64,7 @@ class LocalAIClient(AIClient):
         limit: int = 4,
         allowed_document_ids: list[uuid.UUID] | None = None,
         session_id: uuid.UUID | None = None,
+        selected_document_ids: list[uuid.UUID] | None = None,
     ) -> list[dict]:
         return await local_search_relevant_chunks(
             user_id=user_id,
@@ -71,6 +72,7 @@ class LocalAIClient(AIClient):
             limit=limit,
             allowed_document_ids=allowed_document_ids,
             session_id=session_id,
+            selected_document_ids=selected_document_ids,
         )
 
     async def delete_document_vectors(

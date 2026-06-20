@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CreateSessionRequest(BaseModel):
@@ -21,6 +21,14 @@ class SendMessageRequest(BaseModel):
     content: str
     use_rag: bool = False
     thinking_mode: bool = True
+    rag_chunk_limit: int = Field(default=4, ge=4, le=64)
+    document_ids: list[uuid.UUID] | None = None
+    """
+    Optional list of specific document IDs to restrict RAG search to.
+    Only documents that are global (no session) or belong to the current session
+    are permitted — documents from other sessions are silently excluded.
+    If None (default), all allowed documents for the session are searched.
+    """
 
 
 class MessageResponse(BaseModel):

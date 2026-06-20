@@ -188,23 +188,20 @@ async def _summarize_and_prune(session_id: uuid.UUID, ai_client: AIClient) -> No
 # Main streaming message endpoint
 # ---------------------------------------------------------------------------
 
-@router.post("/sessions/{session_id}/messages")
-async def send_message(
+async def _process_chat_message_and_stream(
     session_id: uuid.UUID,
-    body: SendMessageRequest,
+    current_user: User,
+    content: str,
+    use_rag: bool,
+    thinking_mode: bool,
+    rag_chunk_limit: int,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    ai_client: AIClient = Depends(get_ai_client),
-):
+    db: AsyncSession,
+    ai_client: AIClient,
+    document_ids: list[uuid.UUID] | None = None,
+) -> StreamingResponse:
     """
-    Send a user message and stream the AI response as Server-Sent Events.
-
-    SSE event types emitted:
-      data: {"sources": [...]}        — citations (only when use_rag=True, before tokens)
-      data: {"thinking": "<token>"}   — DeepSeek-R1 chain-of-thought tokens
-      data: {"delta": "<token>"}      — normal response tokens
-      data: [DONE]                    — stream complete
+    Core messaging and streaming logic shared between POST and GET endpoints.
     """
     # 1. Verify the session belongs to the authenticated user.
     sess_result = await db.execute(
@@ -218,7 +215,7 @@ async def send_message(
 
     # 2. Persist the user's message.
     user_msg = ChatMessage(
-        session_id=session_id, role="user", content=body.content
+        session_id=session_id, role="user", content=content
     )
     db.add(user_msg)
     await db.commit()
@@ -261,10 +258,11 @@ async def send_message(
 
     # 6. RAG context injection — search Qdrant for relevant document chunks.
     matching_data: list[dict] = []
-    if body.use_rag:
+    if use_rag:
         try:
             # Retrieve processed documents that belong to current user
-            # AND are either global (session_id IS NULL) OR belong to current session
+            # AND are either global (session_id IS NULL) OR belong to current session.
+            # This is the security boundary — documents from other sessions are never included.
             allowed_docs_result = await db.execute(
                 select(Document.id).where(
                     Document.user_id == current_user.id,
@@ -274,12 +272,20 @@ async def send_message(
             )
             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
 
+            # If the user has selected specific documents, restrict to their selection.
+            # We intersect with allowed_doc_ids so that cross-session documents
+            # provided by the user are silently ignored — they will never appear.
+            if document_ids is not None:
+                allowed_set = set(allowed_doc_ids)
+                allowed_doc_ids = [d for d in document_ids if d in allowed_set]
+
             matching_data = await ai_client.search_relevant_chunks(
                 user_id=current_user.id,
-                query=body.content,
-                limit=4,
+                query=content,
+                limit=rag_chunk_limit,
                 allowed_document_ids=allowed_doc_ids,
                 session_id=session_id,
+                selected_document_ids=document_ids,
             )
         except httpx.ConnectError:
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
@@ -298,7 +304,7 @@ async def send_message(
                 )
 
     # 6.5. Inject thinking mode instruction.
-    if body.thinking_mode:
+    if thinking_mode:
         system_instruction += (
             "\n\nYou may think step by step and output your reasoning inside <think>...</think> tags before answering."
         )
@@ -314,7 +320,6 @@ async def send_message(
 
     # Capture ids needed inside the async generator closure.
     _session_id = session_id
-    _user_id = current_user.id
 
     async def event_generator():
         full_response = ""
@@ -373,3 +378,90 @@ async def send_message(
         background_tasks.add_task(_summarize_and_prune, _session_id, ai_client)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/sessions/{session_id}/messages")
+async def send_message(
+    session_id: uuid.UUID,
+    body: SendMessageRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
+):
+    """
+    Send a user message and stream the AI response as Server-Sent Events (POST route).
+    """
+    return await _process_chat_message_and_stream(
+        session_id=session_id,
+        current_user=current_user,
+        content=body.content,
+        use_rag=body.use_rag,
+        thinking_mode=body.thinking_mode,
+        rag_chunk_limit=body.rag_chunk_limit,
+        document_ids=body.document_ids,
+        background_tasks=background_tasks,
+        db=db,
+        ai_client=ai_client,
+    )
+
+
+@router.get("/sessions/{session_id}/messages/stream")
+async def stream_messages_get(
+    session_id: uuid.UUID,
+    content: str,
+    token: str,
+    background_tasks: BackgroundTasks,
+    use_rag: bool = False,
+    thinking_mode: bool = True,
+    rag_chunk_limit: int = 4,
+    document_ids: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    ai_client: AIClient = Depends(get_ai_client),
+):
+    """
+    Send a user message and stream the AI response as Server-Sent Events (GET route for EventSource compatibility).
+    """
+    # 1. Authenticate user from the token passed as query parameter
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        from app.auth.security.jwt import decode_token
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            raise credentials_exception
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        current_user_id = uuid.UUID(user_id)
+    except Exception:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.id == current_user_id))
+    current_user = result.scalar_one_or_none()
+    if current_user is None or not current_user.is_active:
+        raise credentials_exception
+
+    # Parse comma-separated document_ids string into a list of UUIDs (if provided).
+    parsed_document_ids: list[uuid.UUID] | None = None
+    if document_ids:
+        try:
+            parsed_document_ids = [uuid.UUID(d.strip()) for d in document_ids.split(",") if d.strip()]
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid document_ids format. Expected comma-separated UUIDs.")
+
+    return await _process_chat_message_and_stream(
+        session_id=session_id,
+        current_user=current_user,
+        content=content,
+        use_rag=use_rag,
+        thinking_mode=thinking_mode,
+        rag_chunk_limit=rag_chunk_limit,
+        document_ids=parsed_document_ids,
+        background_tasks=background_tasks,
+        db=db,
+        ai_client=ai_client,
+    )

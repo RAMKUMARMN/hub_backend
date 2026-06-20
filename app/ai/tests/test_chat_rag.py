@@ -596,3 +596,146 @@ async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_
     assert len(results) == 2
     assert results[0]["filename"] == "resume_johndoe.pdf"
     assert results[1]["filename"] == "random_notes.txt"
+
+
+@pytest.mark.asyncio
+@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
+async def test_chat_rag_chunk_limit_and_get_stream(mock_stream_post, authenticated_client):
+    """
+    Verifies that the SendMessageRequest schema validates rag_chunk_limit bounds,
+    the POST endpoint passes rag_chunk_limit correctly, and the GET stream
+    endpoint resolves tokens correctly and supports streaming.
+    """
+    resp = await authenticated_client.post(
+        "/api/v1/chat/sessions",
+        json={"title": "Test Session"}
+    )
+    session_id = resp.json()["id"]
+
+    # Mock Ollama streaming
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    async def mock_aiter_lines():
+        yield json.dumps({"message": {"content": "Response"}})
+    mock_response.aiter_lines = mock_aiter_lines
+    
+    class AsyncContextManagerMock:
+        async def __aenter__(self): return mock_response
+        async def __aexit__(self, et, ev, tb): pass
+
+    mock_stream_post.return_value = AsyncContextManagerMock()
+
+    # 1. Test POST validation fails for range limits (e.g., < 4 or > 64)
+    resp_invalid_low = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "query", "use_rag": True, "rag_chunk_limit": 3}
+    )
+    assert resp_invalid_low.status_code == 422
+
+    resp_invalid_high = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "query", "use_rag": True, "rag_chunk_limit": 65}
+    )
+    assert resp_invalid_high.status_code == 422
+
+    # 2. Test POST works with valid rag_chunk_limit (e.g. 16)
+    resp_valid = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "query", "use_rag": False, "rag_chunk_limit": 16}
+    )
+    assert resp_valid.status_code == 200
+
+    # 3. Test GET message stream endpoint
+    # Extract JWT token from the client headers
+    auth_header = authenticated_client.headers.get("Authorization")
+    token = auth_header.split(" ")[1] if auth_header else ""
+
+    get_resp = await authenticated_client.get(
+        f"/api/v1/chat/sessions/{session_id}/messages/stream",
+        params={
+            "content": "GET query",
+            "token": token,
+            "use_rag": False,
+            "thinking_mode": True,
+            "rag_chunk_limit": 8
+        }
+    )
+    assert get_resp.status_code == 200
+    assert "text/event-stream" in get_resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_search_relevant_chunks_selected_similarity_boost(setup_qdrant_test_collection):
+    """
+    Verifies that search_relevant_chunks applies the +0.40 score boost
+    for selected documents matching query keywords in name or content.
+    """
+    from app.ai import store_document_vectors, search_relevant_chunks
+    user_id = uuid.uuid4()
+    
+    # Create two documents. One will be selected, the other not.
+    selected_doc_id = uuid.uuid4()
+    other_doc_id = uuid.uuid4()
+    
+    # Store selected doc (has matching filename keyword)
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=selected_doc_id,
+        text="This contains some general info.",
+        filename="selected_invoice.pdf",
+    )
+    
+    # Store other doc (also has matching filename keyword, but not selected)
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=other_doc_id,
+        text="This contains some general info.",
+        filename="other_invoice.pdf",
+    )
+    
+    # 1. Test filename match boost (+0.40) on selected doc
+    # Both are similar to the query "invoice info" by filename.
+    # But only selected_doc_id is in selected_document_ids.
+    # Therefore, selected_doc_id should get the 0.40 boost and rank first.
+    results = await search_relevant_chunks(
+        user_id=user_id,
+        query="invoice info",
+        limit=2,
+        allowed_document_ids=[selected_doc_id, other_doc_id],
+        selected_document_ids=[selected_doc_id],
+    )
+    
+    assert len(results) == 2
+    assert results[0]["filename"] == "selected_invoice.pdf"
+    
+    # 2. Test content match boost (+0.40) on selected doc
+    # Let's create two docs where the filename does NOT match, but the text content matches query keyword "banana".
+    selected_banana_doc_id = uuid.uuid4()
+    other_banana_doc_id = uuid.uuid4()
+    
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=selected_banana_doc_id,
+        text="The quick yellow banana is sweet.",
+        filename="first.txt",
+    )
+    
+    await store_document_vectors(
+        user_id=user_id,
+        document_id=other_banana_doc_id,
+        text="The quick yellow banana is sweet.",
+        filename="second.txt",
+    )
+    
+    results_banana = await search_relevant_chunks(
+        user_id=user_id,
+        query="banana fruit",
+        limit=2,
+        allowed_document_ids=[selected_banana_doc_id, other_banana_doc_id],
+        selected_document_ids=[selected_banana_doc_id],
+    )
+    
+    assert len(results_banana) == 2
+    # The selected document should be first since it got +0.40 boost
+    assert results_banana[0]["filename"] == "first.txt"
+

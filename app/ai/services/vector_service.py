@@ -295,6 +295,7 @@ async def search_relevant_chunks(
     limit: int = 4,
     allowed_document_ids: list[uuid.UUID] | None = None,
     session_id: uuid.UUID | None = None,
+    selected_document_ids: list[uuid.UUID] | None = None,
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -343,7 +344,7 @@ async def search_relevant_chunks(
     keywords = [w for w in words if w not in stopwords and len(w) > 2]
 
     # Fetch a larger candidate pool if we are applying score boosting for session or filename priority
-    has_boosting = bool(session_id or keywords)
+    has_boosting = bool(session_id or keywords or selected_document_ids)
     fetch_limit = max(limit * 3, 15) if has_boosting else limit
 
     results = await qdrant_client.query_points(
@@ -354,6 +355,7 @@ async def search_relevant_chunks(
     )
 
     if has_boosting:
+        selected_document_ids_set = {str(d) for d in selected_document_ids} if selected_document_ids else set()
         boosted_points = []
         for hit in results.points:
             score = hit.score if hit.score is not None else 0.0
@@ -365,10 +367,25 @@ async def search_relevant_chunks(
 
             # Apply filename keyword match boost (+0.20)
             filename = hit.payload.get("filename")
+            filename_match = False
             if filename and keywords:
                 filename_clean = filename.lower().rsplit(".", 1)[0]
                 if any(kw in filename_clean for kw in keywords):
                     score += 0.20
+                    filename_match = True
+
+            # Apply selected document similarity boost (+0.40)
+            point_doc_id = hit.payload.get("document_id")
+            if selected_document_ids and point_doc_id and point_doc_id in selected_document_ids_set:
+                doc_similar = filename_match
+                if not doc_similar:
+                    text = hit.payload.get("text")
+                    if text and keywords:
+                        text_clean = text.lower()
+                        if any(kw in text_clean for kw in keywords):
+                            doc_similar = True
+                if doc_similar:
+                    score += 0.40
 
             boosted_points.append((hit, score))
         
