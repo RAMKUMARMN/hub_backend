@@ -1,0 +1,10 @@
+{
+    "id": "discover-metadata-chunking",
+    "name": "discover-metadata-chunking",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "",
+    "tool": ""
+}

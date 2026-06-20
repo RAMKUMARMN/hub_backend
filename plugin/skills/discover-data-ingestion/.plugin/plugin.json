@@ -1,0 +1,10 @@
+{
+    "id": "discover-data-ingestion",
+    "name": "discover-data-ingestion",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "",
+    "tool": ""
+}

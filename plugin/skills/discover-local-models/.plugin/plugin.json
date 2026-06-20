@@ -1,0 +1,10 @@
+{
+    "id": "discover-local-models",
+    "name": "discover-local-models",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "",
+    "tool": ""
+}
