@@ -26,6 +26,11 @@ async def client():
 async def clean_database():
     from app.database import engine
     await engine.dispose()
+    from app.redis import redis_client
+    try:
+        await redis_client.connection_pool.disconnect()
+    except Exception:
+        pass
     async with AsyncSessionLocal() as session:
         await session.execute(text("TRUNCATE TABLE users, todos CASCADE;"))
         await session.commit()

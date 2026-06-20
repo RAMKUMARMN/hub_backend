@@ -21,6 +21,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    MatchText,
     MatchValue,
     MatchAny,
     PointStruct,
@@ -36,6 +37,51 @@ logger = logging.getLogger(__name__)
 
 # Module-level async client — shared across all requests.
 qdrant_client = AsyncQdrantClient(url=settings.qdrant_url)
+
+
+async def _ensure_payload_indexes() -> None:
+    """
+    Best-effort payload indexes used by RAG filters and keyword retrieval.
+
+    Qdrant raises if an index already exists on some versions, so each index is
+    created independently and duplicate/existing-index errors are intentionally
+    ignored.
+    """
+    index_specs = [
+        (
+            "text",
+            TextIndexParams(
+                type="text",
+                tokenizer=TokenizerType.MULTILINGUAL,
+                lowercase=True,
+            ),
+        ),
+        (
+            "filename",
+            TextIndexParams(
+                type="text",
+                tokenizer=TokenizerType.MULTILINGUAL,
+                lowercase=True,
+            ),
+        ),
+        ("user_id", PayloadSchemaType.KEYWORD),
+        ("session_id", PayloadSchemaType.KEYWORD),
+        ("document_id", PayloadSchemaType.KEYWORD),
+    ]
+
+    for field_name, field_schema in index_specs:
+        try:
+            await qdrant_client.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name=field_name,
+                field_schema=field_schema,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Payload index on '%s' was not created, likely already exists: %s",
+                field_name,
+                exc,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -65,32 +111,11 @@ async def init_qdrant_collection() -> None:
             )
             logger.info("Qdrant collection '%s' created.", settings.qdrant_collection)
 
-            # Add keyword payload index for hybrid search (vector + full-text).
-            await qdrant_client.create_payload_index(
-                collection_name=settings.qdrant_collection,
-                field_name="text",
-                field_schema=TextIndexParams(
-                    type="text",
-                    tokenizer=TokenizerType.MULTILINGUAL,
-                    lowercase=True,
-                ),
-            )
-            logger.info("Full-text payload index created on 'text' field.")
-
-            # Create payload indexes on user_id and session_id for multi-tenant isolation.
-            await qdrant_client.create_payload_index(
-                collection_name=settings.qdrant_collection,
-                field_name="user_id",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-            await qdrant_client.create_payload_index(
-                collection_name=settings.qdrant_collection,
-                field_name="session_id",
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-            logger.info("Payload indexes created on 'user_id' and 'session_id' fields.")
+            await _ensure_payload_indexes()
+            logger.info("Payload indexes created for RAG retrieval.")
         else:
             logger.info("Qdrant collection '%s' already exists.", settings.qdrant_collection)
+            await _ensure_payload_indexes()
     except Exception as exc:
         logger.warning(
             "Failed to initialise Qdrant collection (is Qdrant running?): %s. "
@@ -289,10 +314,182 @@ async def store_document_vectors(
 # Retrieval
 # ---------------------------------------------------------------------------
 
+def _query_keywords(query: str) -> list[str]:
+    words = re.findall(r"\b\w+\b", query.lower())
+    stopwords = {
+        "explain", "show", "summarize", "tell", "describe", "get", "retrieve",
+        "my", "the", "a", "an", "is", "for", "of", "in", "on", "at", "by", "with",
+        "about", "document", "file", "pdf", "docx", "txt", "sheet", "image",
+        "me", "please", "can", "you", "what", "who", "where", "when", "how"
+    }
+    return [w for w in words if w not in stopwords and len(w) > 2]
+
+
+def _build_base_filter(
+    user_id: uuid.UUID,
+    allowed_document_ids: list[uuid.UUID] | None = None,
+    extra_conditions: list[FieldCondition] | None = None,
+) -> Filter:
+    must_conditions = [
+        FieldCondition(
+            key="user_id",
+            match=MatchValue(value=str(user_id)),
+        )
+    ]
+
+    if allowed_document_ids is not None:
+        must_conditions.append(
+            FieldCondition(
+                key="document_id",
+                match=MatchAny(any=[str(doc_id) for doc_id in allowed_document_ids]),
+            )
+        )
+
+    if extra_conditions:
+        must_conditions.extend(extra_conditions)
+
+    return Filter(must=must_conditions)
+
+
+def _keyword_score(payload: dict, keywords: list[str]) -> float:
+    if not keywords:
+        return 0.0
+
+    text = (payload.get("text") or "").lower()
+    filename = (payload.get("filename") or "").lower()
+    searchable = f"{filename} {text}"
+
+    matches = sum(1 for keyword in keywords if keyword in searchable)
+    if matches == 0:
+        return 0.0
+
+    score = matches / len(keywords)
+    if any(keyword in filename for keyword in keywords):
+        score += 0.25
+    return min(score, 1.0)
+
+
+def _boosted_score(
+    payload: dict,
+    base_score: float,
+    keywords: list[str],
+    session_id: uuid.UUID | None = None,
+    selected_document_ids: list[uuid.UUID] | None = None,
+) -> float:
+    score = base_score
+
+    point_session_id = payload.get("session_id")
+    if session_id and point_session_id == str(session_id):
+        score += 0.15
+
+    filename = (payload.get("filename") or "").lower().rsplit(".", 1)[0]
+    filename_match = bool(filename and keywords and any(kw in filename for kw in keywords))
+    if filename_match:
+        score += 0.20
+
+    point_doc_id = payload.get("document_id")
+    selected_document_ids_set = {str(d) for d in selected_document_ids} if selected_document_ids else set()
+    if selected_document_ids and point_doc_id and point_doc_id in selected_document_ids_set:
+        text = (payload.get("text") or "").lower()
+        content_match = bool(keywords and any(kw in text for kw in keywords))
+        if filename_match or content_match:
+            score += 0.40
+
+    return score
+
+
+def _result_key(payload: dict) -> tuple[str, int]:
+    return (
+        str(payload.get("document_id") or ""),
+        int(payload.get("chunk_index") or 0),
+    )
+
+
+def _format_result(payload: dict, score: float, match_type: str) -> dict:
+    return {
+        "text": payload.get("text", ""),
+        "filename": payload.get("filename", "Unknown"),
+        "document_id": payload.get("document_id", ""),
+        "score": round(score, 6),
+        "match_type": match_type,
+    }
+
+
+async def _semantic_candidates(
+    user_id: uuid.UUID,
+    query: str,
+    limit: int,
+    allowed_document_ids: list[uuid.UUID] | None,
+) -> list[tuple[dict, float]]:
+    query_vector = await get_ollama_embedding(query, prefix_type="query")
+    results = await qdrant_client.query_points(
+        collection_name=settings.qdrant_collection,
+        query=query_vector,
+        query_filter=_build_base_filter(user_id, allowed_document_ids),
+        limit=limit,
+    )
+    return [
+        (hit.payload or {}, hit.score if hit.score is not None else 0.0)
+        for hit in results.points
+    ]
+
+
+async def _keyword_candidates(
+    user_id: uuid.UUID,
+    query: str,
+    keywords: list[str],
+    limit: int,
+    allowed_document_ids: list[uuid.UUID] | None,
+) -> list[tuple[dict, float]]:
+    if not keywords:
+        return []
+
+    seen: dict[tuple[str, int], tuple[dict, float]] = {}
+    search_terms = [query] + keywords[:6]
+
+    for term in search_terms:
+        text_condition = FieldCondition(
+            key="text",
+            match=MatchText(text=term),
+        )
+        filename_condition = FieldCondition(
+            key="filename",
+            match=MatchText(text=term),
+        )
+
+        for condition in (text_condition, filename_condition):
+            try:
+                points, _ = await qdrant_client.scroll(
+                    collection_name=settings.qdrant_collection,
+                    scroll_filter=_build_base_filter(
+                        user_id,
+                        allowed_document_ids,
+                        extra_conditions=[condition],
+                    ),
+                    limit=limit,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+            except Exception as exc:
+                logger.debug("Keyword candidate search failed for term '%s': %s", term, exc)
+                continue
+
+            for point in points:
+                payload = point.payload or {}
+                key = _result_key(payload)
+                score = _keyword_score(payload, keywords)
+                previous = seen.get(key)
+                if previous is None or score > previous[1]:
+                    seen[key] = (payload, score)
+
+    return sorted(seen.values(), key=lambda item: item[1], reverse=True)[:limit]
+
+
 async def search_relevant_chunks(
     user_id: uuid.UUID,
     query: str,
     limit: int = 4,
+    retrieval_mode: str = "semantic",
     allowed_document_ids: list[uuid.UUID] | None = None,
     session_id: uuid.UUID | None = None,
     selected_document_ids: list[uuid.UUID] | None = None,
@@ -316,92 +513,89 @@ async def search_relevant_chunks(
     if allowed_document_ids is not None and not allowed_document_ids:
         return []
 
-    query_vector = await get_ollama_embedding(query, prefix_type="query")
+    retrieval_mode = retrieval_mode.lower()
+    if retrieval_mode not in {"semantic", "keyword", "hybrid"}:
+        retrieval_mode = "semantic"
 
-    must_conditions = [
-        FieldCondition(
-            key="user_id",
-            match=MatchValue(value=str(user_id)),
-        )
-    ]
-
-    if allowed_document_ids is not None:
-        must_conditions.append(
-            FieldCondition(
-                key="document_id",
-                match=MatchAny(any=[str(doc_id) for doc_id in allowed_document_ids]),
-            )
-        )
-
-    # Clean and tokenize query into keywords for filename matching
-    words = re.findall(r"\b\w+\b", query.lower())
-    stopwords = {
-        "explain", "show", "summarize", "tell", "describe", "get", "retrieve",
-        "my", "the", "a", "an", "is", "for", "of", "in", "on", "at", "by", "with",
-        "about", "document", "file", "pdf", "docx", "txt", "sheet", "image",
-        "me", "please", "can", "you", "what", "who", "where", "when", "how"
-    }
-    keywords = [w for w in words if w not in stopwords and len(w) > 2]
-
-    # Fetch a larger candidate pool if we are applying score boosting for session or filename priority
+    keywords = _query_keywords(query)
     has_boosting = bool(session_id or keywords or selected_document_ids)
-    fetch_limit = max(limit * 3, 15) if has_boosting else limit
+    candidate_limit = max(limit * 3, 15) if has_boosting or retrieval_mode == "hybrid" else limit
 
-    results = await qdrant_client.query_points(
-        collection_name=settings.qdrant_collection,
-        query=query_vector,
-        query_filter=Filter(must=must_conditions),
-        limit=fetch_limit,
-    )
+    candidates: dict[tuple[str, int], dict] = {}
 
-    if has_boosting:
-        selected_document_ids_set = {str(d) for d in selected_document_ids} if selected_document_ids else set()
-        boosted_points = []
-        for hit in results.points:
-            score = hit.score if hit.score is not None else 0.0
-            
-            # Apply session boost (+0.15)
-            point_session_id = hit.payload.get("session_id")
-            if session_id and point_session_id == str(session_id):
-                score += 0.15
+    if retrieval_mode in {"semantic", "hybrid"}:
+        semantic_results = await _semantic_candidates(
+            user_id=user_id,
+            query=query,
+            limit=candidate_limit,
+            allowed_document_ids=allowed_document_ids,
+        )
+        for payload, semantic_score in semantic_results:
+            key = _result_key(payload)
+            candidates[key] = {
+                "payload": payload,
+                "semantic_score": semantic_score,
+                "keyword_score": _keyword_score(payload, keywords),
+            }
 
-            # Apply filename keyword match boost (+0.20)
-            filename = hit.payload.get("filename")
-            filename_match = False
-            if filename and keywords:
-                filename_clean = filename.lower().rsplit(".", 1)[0]
-                if any(kw in filename_clean for kw in keywords):
-                    score += 0.20
-                    filename_match = True
+    if retrieval_mode in {"keyword", "hybrid"}:
+        keyword_results = await _keyword_candidates(
+            user_id=user_id,
+            query=query,
+            keywords=keywords,
+            limit=candidate_limit,
+            allowed_document_ids=allowed_document_ids,
+        )
+        for payload, keyword_score in keyword_results:
+            key = _result_key(payload)
+            existing = candidates.get(key)
+            if existing:
+                existing["keyword_score"] = max(existing["keyword_score"], keyword_score)
+            else:
+                candidates[key] = {
+                    "payload": payload,
+                    "semantic_score": 0.0,
+                    "keyword_score": keyword_score,
+                }
 
-            # Apply selected document similarity boost (+0.40)
-            point_doc_id = hit.payload.get("document_id")
-            if selected_document_ids and point_doc_id and point_doc_id in selected_document_ids_set:
-                doc_similar = filename_match
-                if not doc_similar:
-                    text = hit.payload.get("text")
-                    if text and keywords:
-                        text_clean = text.lower()
-                        if any(kw in text_clean for kw in keywords):
-                            doc_similar = True
-                if doc_similar:
-                    score += 0.40
+    if retrieval_mode == "keyword" and not candidates:
+        return []
 
-            boosted_points.append((hit, score))
-        
-        # Sort by boosted score descending
-        boosted_points.sort(key=lambda x: x[1], reverse=True)
-        selected_points = [item[0] for item in boosted_points[:limit]]
-    else:
-        selected_points = results.points[:limit]
+    reranked = []
+    for item in candidates.values():
+        payload = item["payload"]
+        semantic_score = item["semantic_score"]
+        keyword_score = item["keyword_score"]
+
+        if retrieval_mode == "hybrid":
+            base_score = (semantic_score * 0.65) + (keyword_score * 0.35)
+        elif retrieval_mode == "keyword":
+            base_score = keyword_score
+        else:
+            base_score = semantic_score
+
+        final_score = _boosted_score(
+            payload=payload,
+            base_score=base_score,
+            keywords=keywords,
+            session_id=session_id,
+            selected_document_ids=selected_document_ids,
+        )
+        match_type = retrieval_mode
+        if retrieval_mode == "hybrid":
+            if semantic_score and keyword_score:
+                match_type = "hybrid"
+            elif semantic_score:
+                match_type = "semantic"
+            else:
+                match_type = "keyword"
+        reranked.append((payload, final_score, match_type))
+
+    reranked.sort(key=lambda item: item[1], reverse=True)
 
     return [
-        {
-            "text": hit.payload.get("text", ""),
-            "filename": hit.payload.get("filename", "Unknown"),
-            "document_id": hit.payload.get("document_id", ""),
-        }
-        for hit in selected_points
+        _format_result(payload, score, match_type)
+        for payload, score, match_type in reranked[:limit]
     ]
 
 

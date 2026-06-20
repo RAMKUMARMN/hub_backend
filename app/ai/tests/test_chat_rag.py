@@ -10,10 +10,12 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, TokenizerType, TextIndexParams, VectorParams
+from qdrant_client.models import Distance, TokenizerType, TextIndexParams, VectorParams, PayloadSchemaType
 
 from app.main import app
 from app.database import AsyncSessionLocal
+from app.ai.client import get_ai_client
+from app.models.document import Document
 from app.models.user import User
 from app.auth.security.password import hash_password
 from app.config import settings
@@ -92,6 +94,34 @@ async def setup_qdrant_test_collection():
             tokenizer=TokenizerType.MULTILINGUAL,
             lowercase=True
         )
+    )
+
+    await client.create_payload_index(
+        collection_name=test_collection_name,
+        field_name="filename",
+        field_schema=TextIndexParams(
+            type="text",
+            tokenizer=TokenizerType.MULTILINGUAL,
+            lowercase=True
+        )
+    )
+
+    await client.create_payload_index(
+        collection_name=test_collection_name,
+        field_name="user_id",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+
+    await client.create_payload_index(
+        collection_name=test_collection_name,
+        field_name="document_id",
+        field_schema=PayloadSchemaType.KEYWORD,
+    )
+
+    await client.create_payload_index(
+        collection_name=test_collection_name,
+        field_name="session_id",
+        field_schema=PayloadSchemaType.KEYWORD,
     )
 
     yield client
@@ -638,10 +668,21 @@ async def test_chat_rag_chunk_limit_and_get_stream(mock_stream_post, authenticat
     )
     assert resp_invalid_high.status_code == 422
 
+    resp_invalid_mode = await authenticated_client.post(
+        f"/api/v1/chat/sessions/{session_id}/messages",
+        json={"content": "query", "use_rag": True, "retrieval_mode": "fuzzy"}
+    )
+    assert resp_invalid_mode.status_code == 422
+
     # 2. Test POST works with valid rag_chunk_limit (e.g. 16)
     resp_valid = await authenticated_client.post(
         f"/api/v1/chat/sessions/{session_id}/messages",
-        json={"content": "query", "use_rag": False, "rag_chunk_limit": 16}
+        json={
+            "content": "query",
+            "use_rag": False,
+            "retrieval_mode": "hybrid",
+            "rag_chunk_limit": 16,
+        }
     )
     assert resp_valid.status_code == 200
 
@@ -657,11 +698,94 @@ async def test_chat_rag_chunk_limit_and_get_stream(mock_stream_post, authenticat
             "token": token,
             "use_rag": False,
             "thinking_mode": True,
+            "retrieval_mode": "keyword",
             "rag_chunk_limit": 8
         }
     )
     assert get_resp.status_code == 200
     assert "text/event-stream" in get_resp.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_chat_rag_passes_hybrid_retrieval_mode(authenticated_client):
+    """
+    Verifies the chat API passes retrieval_mode='hybrid' into the AI RAG client
+    when RAG is enabled.
+    """
+    session_resp = await authenticated_client.post(
+        "/api/v1/chat/sessions",
+        json={"title": "Hybrid Retrieval Test"},
+    )
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    async with AsyncSessionLocal() as session:
+        user_result = await session.execute(
+            text("SELECT id FROM users WHERE email = 'test_rag@tkmce.ac.in'")
+        )
+        user_id = uuid.UUID(str(user_result.scalar_one()))
+
+        doc = Document(
+            user_id=user_id,
+            session_id=None,
+            filename="coa_notes.txt",
+            file_type="txt",
+            file_size=128,
+            storage_path="documents/test/coa_notes.txt",
+            processed=True,
+        )
+        session.add(doc)
+        await session.commit()
+        await session.refresh(doc)
+        document_id = doc.id
+
+    class FakeAIClient:
+        def __init__(self):
+            self.search_relevant_chunks = AsyncMock(
+                return_value=[
+                    {
+                        "text": "Module 4 covers instruction pipelining.",
+                        "filename": "coa_notes.txt",
+                        "document_id": str(document_id),
+                        "score": 0.91,
+                        "match_type": "hybrid",
+                    }
+                ]
+            )
+
+        async def chat_stream(self, messages):
+            yield "Hybrid answer"
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    try:
+        response = await authenticated_client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={
+                "content": "Explain module 4 pipelining from COA notes",
+                "use_rag": True,
+                "retrieval_mode": "hybrid",
+                "rag_chunk_limit": 4,
+            },
+        )
+        assert response.status_code == 200
+
+        events = []
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                events.append(json.loads(data_str))
+
+        assert events[0]["sources"][0]["match_type"] == "hybrid"
+        fake_ai.search_relevant_chunks.assert_awaited_once()
+        call_kwargs = fake_ai.search_relevant_chunks.await_args.kwargs
+        assert call_kwargs["retrieval_mode"] == "hybrid"
+        assert document_id in call_kwargs["allowed_document_ids"]
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
 
 
 @pytest.mark.asyncio
@@ -738,4 +862,3 @@ async def test_search_relevant_chunks_selected_similarity_boost(setup_qdrant_tes
     assert len(results_banana) == 2
     # The selected document should be first since it got +0.40 boost
     assert results_banana[0]["filename"] == "first.txt"
-
