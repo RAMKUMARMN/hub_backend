@@ -1,6 +1,7 @@
 """Todos router — /api/v1/todos/*"""
 import uuid
 
+from app.services.dashboard_service import invalidate_dashboard_cache
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,8 @@ async def create_todo(
         except Exception:
             pass
 
+    await invalidate_dashboard_cache(current_user.id)
+
     return todo
 
 
@@ -103,6 +106,9 @@ async def update_todo(
 
     await db.commit()
     await db.refresh(todo)
+   
+    await invalidate_dashboard_cache(current_user.id)
+   
     return todo
 
 
@@ -122,8 +128,10 @@ async def toggle_complete(
     todo.completed = body.completed
     await db.commit()
     await db.refresh(todo)
+    
+    await invalidate_dashboard_cache(current_user.id)
+    
     return todo
-
 
 @router.delete("/{todo_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_todo(
@@ -137,28 +145,47 @@ async def delete_todo(
     todo = result.scalar_one_or_none()
     if not todo:
         raise HTTPException(status_code=404, detail="Todo not found")
+
     await db.delete(todo)
     await db.commit()
+
+    await invalidate_dashboard_cache(current_user.id)
 
 
 # Subtasks endpoints
 
 from app.models.subtask import TodoSubtask
-from app.schemas.subtask import CreateSubtaskRequest, UpdateSubtaskRequest, SubtaskResponse
+from app.schemas.subtask import (
+    CreateSubtaskRequest,
+    UpdateSubtaskRequest,
+    SubtaskResponse,
+)
 
-async def verify_todo_ownership(todo_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> Todo:
+
+async def verify_todo_ownership(
+    todo_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: AsyncSession
+) -> Todo:
     result = await db.execute(
         select(Todo).where(Todo.id == todo_id, Todo.user_id == user_id)
     )
     todo = result.scalar_one_or_none()
+
     if not todo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Associated todo item not found or not owned by user"
         )
+
     return todo
 
-@router.post("/{todo_id}/subtasks", response_model=SubtaskResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post(
+    "/{todo_id}/subtasks",
+    response_model=SubtaskResponse,
+    status_code=status.HTTP_201_CREATED
+)
 async def create_subtask(
     todo_id: uuid.UUID,
     body: CreateSubtaskRequest,
@@ -166,16 +193,19 @@ async def create_subtask(
     db: AsyncSession = Depends(get_db)
 ):
     await verify_todo_ownership(todo_id, current_user.id, db)
-    
+
     subtask = TodoSubtask(
         todo_id=todo_id,
         title=body.title,
         completed=False
     )
+
     db.add(subtask)
     await db.commit()
     await db.refresh(subtask)
+
     return subtask
+
 
 @router.get("/{todo_id}/subtasks", response_model=list[SubtaskResponse])
 async def list_subtasks(
@@ -184,11 +214,15 @@ async def list_subtasks(
     db: AsyncSession = Depends(get_db)
 ):
     await verify_todo_ownership(todo_id, current_user.id, db)
-    
+
     result = await db.execute(
-        select(TodoSubtask).where(TodoSubtask.todo_id == todo_id).order_by(TodoSubtask.created_at.asc())
+        select(TodoSubtask)
+        .where(TodoSubtask.todo_id == todo_id)
+        .order_by(TodoSubtask.created_at.asc())
     )
+
     return list(result.scalars().all())
+
 
 @router.put("/{todo_id}/subtasks/{subtask_id}", response_model=SubtaskResponse)
 async def update_subtask(
@@ -199,27 +233,39 @@ async def update_subtask(
     db: AsyncSession = Depends(get_db)
 ):
     await verify_todo_ownership(todo_id, current_user.id, db)
-    
+
     result = await db.execute(
-        select(TodoSubtask).where(TodoSubtask.id == subtask_id, TodoSubtask.todo_id == todo_id)
+        select(TodoSubtask)
+        .where(
+            TodoSubtask.id == subtask_id,
+            TodoSubtask.todo_id == todo_id
+        )
     )
+
     subtask = result.scalar_one_or_none()
+
     if not subtask:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subtask not found under this todo"
         )
-        
+
     if body.title is not None:
         subtask.title = body.title
+
     if body.completed is not None:
         subtask.completed = body.completed
-        
+
     await db.commit()
     await db.refresh(subtask)
+
     return subtask
 
-@router.delete("/{todo_id}/subtasks/{subtask_id}", status_code=status.HTTP_204_NO_CONTENT)
+
+@router.delete(
+    "/{todo_id}/subtasks/{subtask_id}",
+    status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_subtask(
     todo_id: uuid.UUID,
     subtask_id: uuid.UUID,
@@ -227,17 +273,22 @@ async def delete_subtask(
     db: AsyncSession = Depends(get_db)
 ):
     await verify_todo_ownership(todo_id, current_user.id, db)
-    
+
     result = await db.execute(
-        select(TodoSubtask).where(TodoSubtask.id == subtask_id, TodoSubtask.todo_id == todo_id)
+        select(TodoSubtask)
+        .where(
+            TodoSubtask.id == subtask_id,
+            TodoSubtask.todo_id == todo_id
+        )
     )
+
     subtask = result.scalar_one_or_none()
+
     if not subtask:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subtask not found under this todo"
         )
-        
+
     await db.delete(subtask)
     await db.commit()
-

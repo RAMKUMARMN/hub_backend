@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 from app.models.focus import FocusSession
 from app.queue.producer import publish_focus_completed
+from app.services.dashboard_service import invalidate_dashboard_cache
 
 class FocusService:
     def __init__(self, db: AsyncSession):
@@ -85,6 +86,9 @@ class FocusService:
 
         # Publish achievement event if focus completed successfully
         if finish_status == "completed" and session.type == "focus":
+            
+            await invalidate_dashboard_cache(user_id)
+            
             try:
                 await publish_focus_completed({
                     "user_id": str(user_id),
