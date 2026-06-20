@@ -4,7 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.services.scheduler import start_scheduler, stop_scheduler
 from app.database import engine
+from app.routers.websocket import router as websocket_router
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.routers import (
     admin_router,
@@ -15,14 +17,17 @@ from app.routers import (
     todos_router,
     n8n_test_router,
     workflows_router,
+    notification_router,
 )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: can run DB migrations check here if needed
+    start_scheduler()
+
     yield
-    # Shutdown: close DB connections
+
+    stop_scheduler()
     await engine.dispose()
 
 
@@ -48,6 +53,7 @@ app.add_middleware(
 
 # Register all routers under /api/v1
 PREFIX = "/api/v1"
+
 app.include_router(auth_router, prefix=PREFIX)
 app.include_router(chat_router, prefix=PREFIX)
 app.include_router(documents_router, prefix=PREFIX)
@@ -56,6 +62,9 @@ app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 app.include_router(n8n_test_router, prefix=PREFIX)
 app.include_router(workflows_router, prefix=PREFIX)
+
+app.include_router(notification_router, prefix=PREFIX)
+app.include_router(websocket_router)
 
 
 @app.get("/api/v1/health", tags=["health"])
