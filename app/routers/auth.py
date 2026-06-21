@@ -6,6 +6,7 @@ Students: implement each TODO endpoint.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.services.audit_service import create_audit_log
 
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -55,6 +56,14 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
+    await create_audit_log(
+    db=db,
+    user_id=user.id,
+    action="REGISTER",
+    resource_type="user",
+    resource_id=str(user.id),
+    details="User registered",
+)
     return user
 
 
@@ -74,6 +83,14 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
+    await create_audit_log(
+    db=db,
+    user_id=user.id,
+    action="LOGIN",
+    resource_type="user",
+    resource_id=str(user.id),
+    details="User logged in",
+)
     return TokenResponse(
         access_token=create_access_token(token_data),
         refresh_token=create_refresh_token(token_data),
@@ -147,6 +164,12 @@ async def update_profile(
     if body.push_notifications is not None:
         current_user.push_notifications = body.push_notifications
     await db.commit()
+    await create_audit_log(db=db,
+    user_id=current_user.id,
+    action="PROFILE_UPDATE",
+    resource_type="user",
+    resource_id=str(current_user.id),
+    details="User updated profile",)
     await db.refresh(current_user)
     return current_user
 
@@ -166,5 +189,13 @@ async def upload_avatar(
     path = await save_file(contents, file.filename, current_user.id)
     current_user.avatar_url = path
     await db.commit()
+    await create_audit_log(
+    db=db,
+    user_id=current_user.id,
+    action="AVATAR_UPLOAD",
+    resource_type="user",
+    resource_id=str(current_user.id),
+    details="User uploaded avatar",
+)
     await db.refresh(current_user)
     return current_user

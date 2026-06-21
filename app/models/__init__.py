@@ -4,13 +4,15 @@ from app.models.document import Document
 from app.models.todo import Todo
 from app.models.poll import PollResponse
 from app.models.notification_job import NotificationJob
+from .audit import AuditLog
 
-all = [
-"User",
-"ChatSession",
-"ChatMessage",
-"Document",
-"Todo",
-"PollResponse",
-"NotificationJob",
+__all__ = [
+    "User",
+    "ChatSession",
+    "ChatMessage",
+    "Document",
+    "Todo",
+    "PollResponse",
+    "NotificationJob",
+    "AuditLog",
 ]
