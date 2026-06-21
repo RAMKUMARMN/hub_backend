@@ -114,7 +114,23 @@ async def send_message(
       4. If body.use_rag is True, call retrieve_chunks() and pass to chat_stream().
       5. Stream tokens from chat_stream(), yielding SSE events.
       6. After streaming completes, save the full assistant response to chat_messages.
-    """
+        """
+
+    # Verify session belongs to current user
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
 
     async def event_generator():
         full_response = ""

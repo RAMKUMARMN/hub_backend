@@ -54,6 +54,7 @@ app.include_router(todos_router, prefix=PREFIX)
 app.include_router(notifications_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
+app.include_router(notification_jobs_router, prefix=PREFIX)
 
 
 @app.get("/api/v1/health", tags=["health"])
