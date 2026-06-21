@@ -1,0 +1,44 @@
+[
+  {
+    "id": "discover_api_routes",
+    "name": "Discover API Routes",
+    "description": "Discover backend API endpoints, routes, and request handlers.",
+    "file": "discoverApiRoutes.ts"
+  },
+  {
+    "id": "discover_backend_architecture",
+    "name": "Discover Backend Architecture",
+    "description": "Discover the overall backend architecture, modules, and project structure.",
+    "file": "discoverBackendArchitecture.ts"
+  },
+  {
+    "id": "discover_database_config",
+    "name": "Discover Database Config",
+    "description": "Discover database configurations, connections, and ORM settings.",
+    "file": "discoverDatabaseConfig.ts"
+  },
+  {
+    "id": "discover_models",
+    "name": "Discover Models",
+    "description": "Discover backend data models, entities, and schemas.",
+    "file": "discoverModels.ts"
+  },
+  {
+    "id": "discover_schemas",
+    "name": "Discover Schemas",
+    "description": "Discover validation schemas, request models, and response definitions.",
+    "file": "discoverSchemas.ts"
+  },
+  {
+    "id": "discover_services",
+    "name": "Discover Services",
+    "description": "Discover business logic services and application service layers.",
+    "file": "discoverServices.ts"
+  },
+  {
+    "id": "find_feature",
+    "name": "Find Feature",
+    "description": "Find backend files and implementations related to a specific feature.",
+    "file": "findFeature.ts"
+  }
+]
