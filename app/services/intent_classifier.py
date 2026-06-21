@@ -40,7 +40,7 @@ async def classify_intent(message: str) -> str:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
 
-                "http://10.0.2.2:11434/api/generate",
+                "http://localhost:11434/api/generate",
                 json={
                     "model": "qwen3",
                     "prompt": prompt,
