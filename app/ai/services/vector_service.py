@@ -415,6 +415,36 @@ def _format_result(payload: dict, score: float, match_type: str) -> dict:
     }
 
 
+async def generate_hypothetical_document(query: str) -> str:
+    """
+    Generate a concise hypothetical passage for HyDE retrieval.
+
+    The generated text is used only as the semantic search query. The user's
+    original question remains the source of truth for keyword search, reranking,
+    and final answer generation.
+    """
+    prompt = (
+        "Write a concise factual passage that could answer the user's question. "
+        "Do not use markdown, citations, bullet points, or claims of certainty. "
+        "Do not mention that the passage is hypothetical. "
+        "Keep it under 120 words.\n\n"
+        f"Question: {query}\n\n"
+        "Passage:"
+    )
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        response = await client.post(
+            f"{settings.ollama_base_url}/api/generate",
+            json={
+                "model": settings.ollama_model,
+                "prompt": prompt,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        return response.json().get("response", "").strip()
+
+
 async def _semantic_candidates(
     user_id: uuid.UUID,
     query: str,
@@ -490,6 +520,7 @@ async def search_relevant_chunks(
     query: str,
     limit: int = 4,
     retrieval_mode: str = "semantic",
+    use_hyde: bool = False,
     allowed_document_ids: list[uuid.UUID] | None = None,
     session_id: uuid.UUID | None = None,
     selected_document_ids: list[uuid.UUID] | None = None,
@@ -522,11 +553,24 @@ async def search_relevant_chunks(
     candidate_limit = max(limit * 3, 15) if has_boosting or retrieval_mode == "hybrid" else limit
 
     candidates: dict[tuple[str, int], dict] = {}
+    semantic_query = query
+
+    if use_hyde and retrieval_mode in {"semantic", "hybrid"}:
+        try:
+            hypothetical_document = await generate_hypothetical_document(query)
+            if hypothetical_document:
+                semantic_query = hypothetical_document
+        except Exception as exc:
+            logger.warning(
+                "HyDE generation failed; falling back to original query: %s",
+                exc,
+                exc_info=settings.debug,
+            )
 
     if retrieval_mode in {"semantic", "hybrid"}:
         semantic_results = await _semantic_candidates(
             user_id=user_id,
-            query=query,
+            query=semantic_query,
             limit=candidate_limit,
             allowed_document_ids=allowed_document_ids,
         )

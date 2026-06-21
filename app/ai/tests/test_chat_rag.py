@@ -765,6 +765,7 @@ async def test_chat_rag_passes_hybrid_retrieval_mode(authenticated_client):
             json={
                 "content": "Explain module 4 pipelining from COA notes",
                 "use_rag": True,
+                "use_hyde": True,
                 "retrieval_mode": "hybrid",
                 "rag_chunk_limit": 4,
             },
@@ -783,7 +784,84 @@ async def test_chat_rag_passes_hybrid_retrieval_mode(authenticated_client):
         fake_ai.search_relevant_chunks.assert_awaited_once()
         call_kwargs = fake_ai.search_relevant_chunks.await_args.kwargs
         assert call_kwargs["retrieval_mode"] == "hybrid"
+        assert call_kwargs["use_hyde"] is True
         assert document_id in call_kwargs["allowed_document_ids"]
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+
+@pytest.mark.asyncio
+async def test_chat_get_stream_passes_hyde_toggle(authenticated_client):
+    """
+    Verifies the EventSource-compatible GET stream endpoint parses use_hyde and
+    passes it into the RAG client.
+    """
+    session_resp = await authenticated_client.post(
+        "/api/v1/chat/sessions",
+        json={"title": "GET HyDE Test"},
+    )
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    async with AsyncSessionLocal() as session:
+        user_result = await session.execute(
+            text("SELECT id FROM users WHERE email = 'test_rag@tkmce.ac.in'")
+        )
+        user_id = uuid.UUID(str(user_result.scalar_one()))
+
+        doc = Document(
+            user_id=user_id,
+            session_id=None,
+            filename="hyde_notes.txt",
+            file_type="txt",
+            file_size=128,
+            storage_path="documents/test/hyde_notes.txt",
+            processed=True,
+        )
+        session.add(doc)
+        await session.commit()
+        await session.refresh(doc)
+
+    class FakeAIClient:
+        def __init__(self):
+            self.search_relevant_chunks = AsyncMock(
+                return_value=[
+                    {
+                        "text": "HyDE retrieves by embedding a hypothetical answer.",
+                        "filename": "hyde_notes.txt",
+                        "document_id": str(doc.id),
+                        "score": 0.9,
+                        "match_type": "semantic",
+                    }
+                ]
+            )
+
+        async def chat_stream(self, messages):
+            yield "GET HyDE answer"
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    try:
+        auth_header = authenticated_client.headers.get("Authorization")
+        token = auth_header.split(" ")[1] if auth_header else ""
+        response = await authenticated_client.get(
+            f"/api/v1/chat/sessions/{session_id}/messages/stream",
+            params={
+                "content": "Explain HyDE",
+                "token": token,
+                "use_rag": True,
+                "use_hyde": True,
+                "retrieval_mode": "semantic",
+            },
+        )
+        assert response.status_code == 200
+
+        async for _line in response.aiter_lines():
+            pass
+
+        call_kwargs = fake_ai.search_relevant_chunks.await_args.kwargs
+        assert call_kwargs["use_hyde"] is True
     finally:
         app.dependency_overrides.pop(get_ai_client, None)
 
