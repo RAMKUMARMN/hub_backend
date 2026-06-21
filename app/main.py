@@ -11,7 +11,7 @@ from app.routers import (
     auth_router,
     chat_router,
     documents_router,
-    notifications_router,
+    notification_jobs_router,
     poll_router,
     todos_router,
 )
@@ -51,7 +51,6 @@ app.include_router(auth_router, prefix=PREFIX)
 app.include_router(chat_router, prefix=PREFIX)
 app.include_router(documents_router, prefix=PREFIX)
 app.include_router(todos_router, prefix=PREFIX)
-app.include_router(notifications_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
 app.include_router(notification_jobs_router, prefix=PREFIX)
