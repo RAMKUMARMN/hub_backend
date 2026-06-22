@@ -5,12 +5,6 @@ Requires is_admin=True on the authenticated user.
 
 """
 
-#todo anybody seeing this 
-# after person 2 completes this file app/services/dashboard_service.py
-# import   from app.services.dashboard_service import invalidate_dashboard_cache
-# call     await invalidate_dashboard_cache(str(user.id)) in router.delete section
-
-
 import csv
 import io
 import secrets
@@ -37,7 +31,7 @@ from app.auth.security.password import hash_password
 
 from datetime import UTC, datetime
 
-#from app.services.dashboard_service import invalidate_dashboard_cache
+from app.services.dashboard_service import invalidate_dashboard_cache
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -176,5 +170,5 @@ async def delete_user(
 
     user.deleted_at = datetime.now(UTC)
     await db.commit()
-    #await invalidate_dashboard_cache(str(user.id))
+    await invalidate_dashboard_cache(str(user.id))
     await publish_user_cleanup(str(user.id))
