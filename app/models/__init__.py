@@ -5,4 +5,12 @@ from app.models.todo import Todo
 from app.models.poll import PollResponse
 from app.models.notification_job import NotificationJob
 
-__all__ = ["User", "ChatSession", "ChatMessage", "Document", "Todo", "PollResponse", "NotificationJob"]
+all = [
+"User",
+"ChatSession",
+"ChatMessage",
+"Document",
+"Todo",
+"PollResponse",
+"NotificationJob",
+]

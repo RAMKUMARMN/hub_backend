@@ -132,6 +132,20 @@ async def update_profile(
         if body.device_token not in tokens:
             tokens.append(body.device_token)
         current_user.device_tokens = tokens
+    if body.theme is not None:
+        current_user.theme = body.theme
+
+    if body.language is not None:
+        current_user.language = body.language
+
+    if body.timezone is not None:
+        current_user.timezone = body.timezone
+
+    if body.email_notifications is not None:
+        current_user.email_notifications = body.email_notifications
+
+    if body.push_notifications is not None:
+        current_user.push_notifications = body.push_notifications
     await db.commit()
     await db.refresh(current_user)
     return current_user

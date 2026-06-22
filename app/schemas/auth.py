@@ -34,6 +34,12 @@ class UserResponse(BaseModel):
     avatar_url: str | None
     is_admin: bool
     created_at: datetime
+    theme: str
+    language: str
+    timezone: str
+
+    email_notifications: bool
+    push_notifications: bool
 
     model_config = {"from_attributes": True}
 
@@ -42,3 +48,9 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
     device_token: str | None = None  # FCM/APNs push token
+    theme: str | None = None
+    language: str | None = None
+    timezone: str | None = None
+
+    email_notifications: bool | None = None
+    push_notifications: bool | None = None
