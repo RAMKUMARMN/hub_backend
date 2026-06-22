@@ -1,0 +1,10 @@
+{
+    "id": "trace-backend-features",
+    "name": "trace-backend-features",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "mcp_hub_backend",
+    "tool": "findFeature"
+}
