@@ -1,0 +1,10 @@
+{
+    "id": "discover-n8n-orchestration",
+    "name": "discover-n8n-orchestration",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "",
+    "tool": ""
+}

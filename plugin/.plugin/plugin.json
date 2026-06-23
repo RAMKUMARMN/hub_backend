@@ -1,5 +1,54 @@
 {
-	"name": "plugin",
-	"version": "1.0.0",
-	"description": ""
+"repository": "hub_backend",
+"repository_role": "api_gateway",
+"smart_hub": { "platform": "SmartHub", "managed": true, "management_repository": "hub_infra" },
+"name": "SmartHub Backend Plugins",
+"version": "1.0.0",
+
+"repository_priority": 90,
+"orchestrator_registration": {
+  "enabled": true,
+  "managed_by": "hub_infra"
+},
+"mcp_server": {
+"name": "mcp_hub_backend",
+"enabled": true,
+"auto_start": true,
+"is_controller": false
+},
+
+"plugin_root": "plugin",
+
+"supports": [
+"agents",
+"skills",
+"rules",
+"hooks"
+],
+
+"folders": {
+"agents": "agents",
+"skills": "skills",
+"rules": "rules",
+"hooks": "hooks"
+},
+
+"discovery": {
+"enabled": true,
+"recursive": true
+},
+
+"orchestration": {
+"enabled": true,
+"allow_agent_execution": true,
+"allow_skill_execution": true,
+"allow_hook_execution": true,
+"allow_rule_enforcement": true
+},
+
+"admin": {
+"allow_reload": true,
+"allow_enable_disable": true,
+"allow_validation": true
+}
 }
