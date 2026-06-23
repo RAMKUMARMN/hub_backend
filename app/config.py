@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     ollama_embed_model: str = "nomic-embed-text"
+    ollama_vision_model: str = "qwen3-vl:2b"
+    enable_vision_rag: bool = True
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "user_documents"
 

@@ -281,6 +281,45 @@ async def _process_chat_message_and_stream(
                 allowed_set = set(allowed_doc_ids)
                 allowed_doc_ids = [d for d in document_ids if d in allowed_set]
 
+            # Check for generic visual queries referencing session assets
+            content_lower = content.lower().strip()
+            generic_visual_query = any(
+                phrase in content_lower
+                for phrase in (
+                    "this image", "this picture", "this photo",
+                    "attached image", "attached picture", "attached photo",
+                    "explain this", "what is this", "describe this", "what is in this"
+                )
+            )
+
+            forced_image_data: list[dict] = []
+            if generic_visual_query:
+                # Find the most recently processed image/document in the active session
+                latest_image_result = await db.execute(
+                    select(Document)
+                    .where(
+                        Document.session_id == session_id,
+                        Document.processed == True,
+                        Document.file_type.in_(["png", "jpg", "jpeg", "pdf"])
+                    )
+                    .order_by(Document.created_at.desc())
+                    .limit(1)
+                )
+                latest_image = latest_image_result.scalar_one_or_none()
+                if latest_image:
+                    # Force retrieve descriptions/chunks from this specific document
+                    forced_image_data = await ai_client.search_relevant_chunks(
+                        user_id=current_user.id,
+                        query=content,
+                        limit=4,
+                        retrieval_mode=retrieval_mode,
+                        use_hyde=use_hyde,
+                        allowed_document_ids=[latest_image.id],
+                        session_id=session_id,
+                        selected_document_ids=[latest_image.id],
+                    )
+
+            # Standard semantic search
             matching_data = await ai_client.search_relevant_chunks(
                 user_id=current_user.id,
                 query=content,
@@ -291,6 +330,14 @@ async def _process_chat_message_and_stream(
                 session_id=session_id,
                 selected_document_ids=document_ids,
             )
+
+            # Merge forced image descriptions at the beginning of the list, removing duplicates
+            if forced_image_data:
+                seen_texts = {item["text"] for item in forced_image_data}
+                filtered_standard = [item for item in matching_data if item["text"] not in seen_texts]
+                matching_data = forced_image_data + filtered_standard
+                # Limit the total number of chunks passed to the LLM to prevent prompt bloat
+                matching_data = matching_data[:rag_chunk_limit]
         except httpx.ConnectError:
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
 
@@ -332,26 +379,210 @@ async def _process_chat_message_and_stream(
         if matching_data:
             yield f"data: {json.dumps({'sources': matching_data})}\n\n"
 
+        # Check if the retrieved context contains any visual descriptions
+        has_visual_chunks = any(
+            "[Image Description" in item.get("text", "")
+            for item in matching_data
+        )
+
+        direct_content = None
+
+        if use_rag and has_visual_chunks:
+            reinspect_tool = {
+                "type": "function",
+                "function": {
+                    "name": "reinspect_document_page",
+                    "description": (
+                        "Use this tool to re-inspect a specific page of a PDF document using a vision model. "
+                        "Use this ONLY when the retrieved context references a page/image but lacks the "
+                        "specific, exact detail (like values, charts, tables, equations, data points, or text) "
+                        "needed to accurately answer the user's query."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "document_id": {
+                                "type": "string",
+                                "description": "The unique UUID of the document to inspect."
+                            },
+                            "page_number": {
+                                "type": "integer",
+                                "description": "The 1-based page number of the document/PDF to inspect."
+                            },
+                            "specific_question": {
+                                "type": "string",
+                                "description": "The specific question or detail to extract from the page."
+                            }
+                        },
+                        "required": ["document_id", "page_number", "specific_question"]
+                    }
+                }
+            }
+            
+            try:
+                response_msg = await ai_client.chat_with_tools(ollama_messages, tools=[reinspect_tool])
+                tool_calls = response_msg.get("tool_calls")
+                
+                if tool_calls:
+                    ollama_messages.append(response_msg)
+                    
+                    for tool_call in tool_calls:
+                        func_name = tool_call.get("function", {}).get("name")
+                        if func_name == "reinspect_document_page":
+                            args = tool_call.get("function", {}).get("arguments", {})
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {}
+                            
+                            doc_id_str = args.get("document_id")
+                            page_num = args.get("page_number")
+                            specific_question = args.get("specific_question")
+                            
+                            doc_id = None
+                            if doc_id_str:
+                                try:
+                                    doc_id = uuid.UUID(doc_id_str)
+                                except ValueError:
+                                    pass
+                            
+                            if not doc_id:
+                                for chunk in matching_data:
+                                    if "[Image Description" in chunk.get("text", "") and chunk.get("document_id"):
+                                        try:
+                                            doc_id = uuid.UUID(chunk["document_id"])
+                                            break
+                                        except ValueError:
+                                            continue
+                            
+                            reinspect_result = ""
+                            if doc_id:
+                                async with AsyncSessionLocal() as db_session:
+                                    doc_res = await db_session.execute(
+                                        select(Document).where(
+                                            Document.id == doc_id,
+                                            Document.user_id == current_user.id
+                                        )
+                                    )
+                                    doc_obj = doc_res.scalar_one_or_none()
+                                    if doc_obj:
+                                        storage_path = doc_obj.storage_path
+                                        is_url = storage_path.startswith("http://") or storage_path.startswith("https://")
+                                        local_pdf_path = ""
+                                        temp_file_path = None
+                                        
+                                        try:
+                                            if is_url:
+                                                async with httpx.AsyncClient() as client:
+                                                    resp = await client.get(storage_path)
+                                                    resp.raise_for_status()
+                                                    import tempfile
+                                                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{doc_obj.file_type}")
+                                                    temp_file.write(resp.content)
+                                                    temp_file.close()
+                                                    temp_file_path = temp_file.name
+                                                    local_pdf_path = temp_file_path
+                                            else:
+                                                from pathlib import Path
+                                                local_pdf_path = str(Path("uploads") / storage_path)
+                                            
+                                            from app.ai.services import vision_service
+                                            from app.config import settings
+                                            page_number = int(page_num) if page_num else 1
+                                            
+                                            if doc_obj.file_type in ("png", "jpg", "jpeg"):
+                                                from pathlib import Path
+                                                if temp_file_path:
+                                                    img_bytes = Path(temp_file_path).read_bytes()
+                                                else:
+                                                    img_bytes = Path(local_pdf_path).read_bytes()
+                                                compressed = vision_service.process_and_compress_image(img_bytes)
+                                                import base64
+                                                b64_str = base64.b64encode(compressed).decode("utf-8")
+                                                
+                                                prompt = (
+                                                    f"Look at this image. Answer the following question based on the visual contents: {specific_question}"
+                                                )
+                                                
+                                                async with httpx.AsyncClient(timeout=120) as client:
+                                                    response = await client.post(
+                                                        f"{settings.ollama_base_url}/api/generate",
+                                                        json={
+                                                            "model": settings.ollama_vision_model,
+                                                            "prompt": prompt,
+                                                            "images": [b64_str],
+                                                            "stream": False,
+                                                            "options": {
+                                                                "num_ctx": 4096,
+                                                            },
+                                                            "keep_alive": "10s",
+                                                        }
+                                                    )
+                                                    response.raise_for_status()
+                                                    reinspect_result = response.json().get("response", "").strip()
+                                            else:
+                                                reinspect_result = await vision_service.reinspect_page(
+                                                    pdf_path=local_pdf_path,
+                                                    page_number=page_number,
+                                                    specific_question=specific_question
+                                                )
+                                        except Exception as e:
+                                            logger.error("Error in reinspect_page: %s", e, exc_info=True)
+                                            reinspect_result = f"Error during visual reinspection: {str(e)}"
+                                        finally:
+                                            import os
+                                            if temp_file_path and os.path.exists(temp_file_path):
+                                                try:
+                                                    os.unlink(temp_file_path)
+                                                except Exception:
+                                                    pass
+                            
+                            if not reinspect_result:
+                                reinspect_result = "No additional details found on page or document not found."
+                            
+                            tool_msg = {
+                                "role": "tool",
+                                "content": reinspect_result
+                            }
+                            if "id" in tool_call:
+                                tool_msg["tool_call_id"] = tool_call["id"]
+                            ollama_messages.append(tool_msg)
+                else:
+                    direct_content = response_msg.get("content", "")
+            except Exception as exc:
+                logger.error("Failed to execute tool-calling loop: %s", exc, exc_info=True)
+                direct_content = None
+
         # B. Stream tokens from the AI module.
         is_thinking = False
         try:
-            async for token in ai_client.chat_stream(ollama_messages):
-                # Detect DeepSeek-R1 <think> reasoning block boundaries.
-                if "<think>" in token:
-                    is_thinking = True
-                    token = token.replace("<think>", "")
-                if "</think>" in token:
-                    is_thinking = False
-                    token = token.replace("</think>", "")
-
-                if token:
+            if direct_content is not None:
+                import asyncio
+                chunk_size = 8
+                for i in range(0, len(direct_content), chunk_size):
+                    token = direct_content[i : i + chunk_size]
                     full_response += token
-                    if is_thinking:
-                        # Stream thinking tokens with a separate key so
-                        # the frontend can render them differently.
-                        yield f"data: {json.dumps({'thinking': token})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'delta': token})}\n\n"
+                    yield f"data: {json.dumps({'delta': token})}\n\n"
+                    await asyncio.sleep(0.01)
+            else:
+                async for token in ai_client.chat_stream(ollama_messages):
+                    # Detect DeepSeek-R1 <think> reasoning block boundaries.
+                    if "<think>" in token:
+                        is_thinking = True
+                        token = token.replace("<think>", "")
+                    if "</think>" in token:
+                        is_thinking = False
+                        token = token.replace("</think>", "")
+
+                    if token:
+                        full_response += token
+                        if is_thinking:
+                            # Stream thinking tokens with a separate key so
+                            # the frontend can render them differently.
+                            yield f"data: {json.dumps({'thinking': token})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'delta': token})}\n\n"
 
         except httpx.ConnectError:
             error_msg = (

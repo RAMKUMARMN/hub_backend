@@ -84,3 +84,32 @@ async def get_embedding(text: str) -> list[float]:
     Delegates to vector_service.get_ollama_embedding().
     """
     return await get_ollama_embedding(text)
+
+
+async def chat_with_tools(
+    messages: list[dict],
+    tools: list[dict] | None = None,
+) -> dict:
+    """
+    One-shot chat completion with Ollama supporting tool/function calling.
+    Returns the message dictionary (which may contain 'content' or 'tool_calls').
+    """
+    payload = {
+        "model": settings.ollama_model,
+        "messages": messages,
+        "stream": False,
+    }
+    if tools:
+        payload["tools"] = tools
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        try:
+            response = await client.post(
+                f"{settings.ollama_base_url}/api/chat",
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json().get("message", {})
+        except Exception as exc:
+            logger.error("Ollama chat_with_tools request failed: %s", exc)
+            raise exc

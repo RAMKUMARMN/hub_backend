@@ -8,9 +8,11 @@ from app.ai.services.llm_service import (
     chat_stream as local_chat_stream,
     summarize_text as local_summarize_text,
     get_embedding as local_get_embedding,
+    chat_with_tools as local_chat_with_tools,
 )
 from app.ai.services.vector_service import (
     store_document_vectors as local_store_document_vectors,
+    store_image_vectors as local_store_image_vectors,
     search_relevant_chunks as local_search_relevant_chunks,
     delete_document_vectors as local_delete_document_vectors,
 )
@@ -35,6 +37,13 @@ class LocalAIClient(AIClient):
     ) -> str:
         return await local_summarize_text(text)
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> dict:
+        return await local_chat_with_tools(messages, tools)
+
     async def get_embedding(
         self,
         text: str,
@@ -54,6 +63,22 @@ class LocalAIClient(AIClient):
             document_id=document_id,
             text=text,
             filename=filename,
+            session_id=session_id,
+        )
+
+    async def store_image_vectors(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        filename: str,
+        image_metadata: list[dict],
+        session_id: uuid.UUID | None = None,
+    ) -> int:
+        return await local_store_image_vectors(
+            user_id=user_id,
+            document_id=document_id,
+            filename=filename,
+            image_metadata=image_metadata,
             session_id=session_id,
         )
 

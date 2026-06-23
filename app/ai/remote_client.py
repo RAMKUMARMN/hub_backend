@@ -77,6 +77,27 @@ class RemoteAIClient(AIClient):
             response.raise_for_status()
             return response.json()["chunks_stored"]
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> dict:
+        import logging
+        logging.getLogger(__name__).warning("chat_with_tools is not supported in RemoteAIClient")
+        return {"role": "assistant", "content": ""}
+
+    async def store_image_vectors(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        filename: str,
+        image_metadata: list[dict],
+        session_id: uuid.UUID | None = None,
+    ) -> int:
+        import logging
+        logging.getLogger(__name__).warning("store_image_vectors is not supported in RemoteAIClient")
+        return 0
+
     async def search_relevant_chunks(
         self,
         user_id: uuid.UUID,

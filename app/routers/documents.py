@@ -168,6 +168,69 @@ async def _process_document(
                     "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
                 )
 
+            # Vision RAG processing for images/PDFs
+            if settings.enable_vision_rag:
+                try:
+                    import base64
+                    import httpx
+                    import os
+                    import tempfile
+                    from pathlib import Path
+                    from app.ai.services import vision_service
+
+                    is_url = storage_path.startswith("http://") or storage_path.startswith("https://")
+                    local_pdf_path = ""
+                    temp_file_path = None
+
+                    if is_url:
+                        async with httpx.AsyncClient() as client:
+                            resp = await client.get(storage_path)
+                            resp.raise_for_status()
+                            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{doc.file_type}")
+                            temp_file.write(resp.content)
+                            temp_file.close()
+                            temp_file_path = temp_file.name
+                            local_pdf_path = temp_file_path
+                    else:
+                        local_pdf_path = str(Path("uploads") / storage_path)
+
+                    visuals = []
+                    if doc.file_type == "pdf":
+                        visuals = vision_service.extract_visuals_from_pdf(local_pdf_path)
+                    elif doc.file_type in ("png", "jpg", "jpeg"):
+                        if temp_file_path:
+                            img_bytes = Path(temp_file_path).read_bytes()
+                        else:
+                            img_bytes = Path(local_pdf_path).read_bytes()
+
+                        compressed = vision_service.process_and_compress_image(img_bytes)
+                        b64_str = base64.b64encode(compressed).decode("utf-8")
+                        visuals = [{"base64_image": b64_str, "page_number": 1}]
+
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+
+                    if visuals:
+                        images_stored = await ai_client.store_image_vectors(
+                            user_id=user_id,
+                            document_id=document_id,
+                            filename=filename,
+                            image_metadata=visuals,
+                            session_id=session_id,
+                        )
+                        logger.info(
+                            "Document %s: %d image descriptions stored in Qdrant.",
+                            document_id,
+                            images_stored,
+                        )
+                except Exception as vision_exc:
+                    logger.error(
+                        "Vision processing failed for document %s: %s",
+                        document_id,
+                        vision_exc,
+                        exc_info=True,
+                    )
+
             # Mark the document as ready for RAG queries.
             doc.processed = True
             await db.commit()

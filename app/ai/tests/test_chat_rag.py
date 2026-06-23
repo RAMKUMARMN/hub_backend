@@ -223,6 +223,7 @@ async def test_upload_document(mock_store, mock_extract, mock_save, authenticate
     assert data["filename"] == "test.txt"
     assert data["processed"] is False
 
+@pytest.mark.live
 @pytest.mark.asyncio
 @patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_client, setup_qdrant_test_collection):
@@ -297,6 +298,7 @@ async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_cli
     print(f"\n✅ Real RAG response: {full_response}")
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 @patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_session_scoped_rag_isolation(
@@ -476,6 +478,7 @@ async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
     assert msg_resp_true.status_code == 200
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collection):
     """
@@ -518,6 +521,7 @@ async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collectio
 
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 @patch("app.ai.local_client.LocalAIClient.extract_text")
 async def test_api_rag_prioritization(
@@ -588,6 +592,7 @@ async def test_api_rag_prioritization(
     assert sources[1]["filename"] == "global_priority.txt"
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_collection):
     """
@@ -866,6 +871,7 @@ async def test_chat_get_stream_passes_hyde_toggle(authenticated_client):
         app.dependency_overrides.pop(get_ai_client, None)
 
 
+@pytest.mark.live
 @pytest.mark.asyncio
 async def test_search_relevant_chunks_selected_similarity_boost(setup_qdrant_test_collection):
     """
@@ -940,3 +946,220 @@ async def test_search_relevant_chunks_selected_similarity_boost(setup_qdrant_tes
     assert len(results_banana) == 2
     # The selected document should be first since it got +0.40 boost
     assert results_banana[0]["filename"] == "first.txt"
+
+
+@pytest.mark.asyncio
+async def test_automatic_session_image_recall(authenticated_client):
+    """
+    Verifies that the chat router automatically detects a generic visual query
+    (e.g., 'explain this image') and force-queries Qdrant for the latest session image.
+    """
+    # 1. Create a session
+    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Session Recall"})
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    # 2. Setup user and document row in PostgreSQL
+    async with AsyncSessionLocal() as db:
+        user_res = await db.execute(text("SELECT id FROM users WHERE email = 'test_rag@tkmce.ac.in'"))
+        user_id = uuid.UUID(str(user_res.scalar_one()))
+
+        doc = Document(
+            user_id=user_id,
+            session_id=session_id,
+            filename="diagram.png",
+            file_type="png",
+            file_size=128,
+            storage_path="documents/test/diagram.png",
+            processed=True,
+        )
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        image_doc_id = doc.id
+
+    # 3. Create a fake AI client that returns a mock search result
+    class FakeAIClient:
+        def __init__(self):
+            self.search_relevant_chunks = AsyncMock(side_effect=self._mock_search)
+
+        def _mock_search(self, *args, **kwargs):
+            # If the search specifically targets our image_doc_id (because of Method 2 bypass)
+            allowed_docs = kwargs.get("allowed_document_ids")
+            if allowed_docs == [image_doc_id]:
+                return [
+                    {
+                        "text": "[Image Description - Page 1]: This is a blue circle.",
+                        "filename": "diagram.png",
+                        "document_id": str(image_doc_id),
+                        "score": 1.0,
+                        "match_type": "semantic"
+                    }
+                ]
+            # Standard search returns empty/unrelated
+            return []
+
+        async def chat_stream(self, messages):
+            yield "Response"
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    try:
+        # Call the chat endpoint with RAG enabled, asking a generic visual query
+        response = await authenticated_client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={
+                "content": "explain this image",
+                "use_rag": True,
+            }
+        )
+        assert response.status_code == 200
+
+        events = []
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                events.append(json.loads(data_str))
+
+        # Check that diagram.png was injected as a source even though standard search would return empty
+        assert len(events) > 0
+        sources = events[0].get("sources", [])
+        assert len(sources) > 0
+        assert sources[0]["filename"] == "diagram.png"
+        assert "blue circle" in sources[0]["text"]
+
+        # Verify that search_relevant_chunks was called with allowed_document_ids set specifically to our image_doc_id
+        fake_ai.search_relevant_chunks.assert_any_call(
+            user_id=user_id,
+            query="explain this image",
+            limit=4,
+            retrieval_mode="semantic",
+            use_hyde=False,
+            allowed_document_ids=[image_doc_id],
+            session_id=session_id,
+            selected_document_ids=[image_doc_id]
+        )
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+
+@pytest.mark.asyncio
+async def test_agentic_reinspection_fallback(authenticated_client):
+    """
+    Verifies that Option A (Agentic Fallback) triggers a tool call when a visual context chunk is retrieved,
+    runs reinspect_page, feeds the results back to the LLM, and streams the final answer.
+    """
+    # 1. Create a session
+    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Agentic Fallback"})
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    # 2. Setup user and document row in PostgreSQL
+    async with AsyncSessionLocal() as db:
+        user_res = await db.execute(text("SELECT id FROM users WHERE email = 'test_rag@tkmce.ac.in'"))
+        user_id = uuid.UUID(str(user_res.scalar_one()))
+
+        doc = Document(
+            user_id=user_id,
+            session_id=session_id,
+            filename="report.pdf",
+            file_type="pdf",
+            file_size=2048,
+            storage_path="documents/test/report.pdf",
+            processed=True,
+        )
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        doc_id = doc.id
+
+    # 3. Create a fake AI client
+    class FakeAIClient:
+        def __init__(self):
+            self.search_relevant_chunks = AsyncMock(return_value=[
+                {
+                    "text": f"[Image Description - Page 3]: A bar chart showing crop yield over the years.",
+                    "filename": "report.pdf",
+                    "document_id": str(doc_id),
+                    "score": 0.95,
+                    "match_type": "semantic"
+                }
+            ])
+            self.chat_with_tools = AsyncMock(return_value={
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_fallback_123",
+                        "type": "function",
+                        "function": {
+                            "name": "reinspect_document_page",
+                            "arguments": {
+                                "document_id": str(doc_id),
+                                "page_number": 3,
+                                "specific_question": "What is the yield value for 2021?"
+                            }
+                        }
+                    }
+                ]
+            })
+            self.chat_stream_called = False
+
+        async def chat_stream(self, messages):
+            self.chat_stream_called = True
+            # Check that the tool response message is indeed appended to the messages sent to the stream
+            has_tool_msg = any(msg.get("role") == "tool" and "15 tons per acre" in msg.get("content") for msg in messages)
+            if has_tool_msg:
+                yield "In 2021, the crop yield was 15 tons per acre."
+            else:
+                yield "Standard response without tool context."
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    # Mock the reinspect_page call in vision_service
+    with patch("app.ai.services.vision_service.reinspect_page", new_callable=AsyncMock) as mock_reinspect:
+        mock_reinspect.return_value = "Crop yield for 2021: 15 tons per acre."
+
+        try:
+            # Call the chat endpoint with RAG enabled
+            response = await authenticated_client.post(
+                f"/api/v1/chat/sessions/{session_id}/messages",
+                json={
+                    "content": "What was the crop yield in 2021 on page 3?",
+                    "use_rag": True,
+                }
+            )
+            assert response.status_code == 200
+
+            events = []
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str == "[DONE]":
+                        break
+                    events.append(json.loads(data_str))
+
+            # Verify response content
+            assert len(events) > 0
+            # First event is source citations
+            assert "sources" in events[0]
+            
+            # Find the delta/response event
+            full_text = "".join(ev.get("delta", "") for ev in events if "delta" in ev)
+            assert "15 tons per acre" in full_text
+
+            # Assertions on tool invocation
+            fake_ai.chat_with_tools.assert_called_once()
+            mock_reinspect.assert_called_once_with(
+                pdf_path="uploads/documents/test/report.pdf",
+                page_number=3,
+                specific_question="What is the yield value for 2021?"
+            )
+            assert fake_ai.chat_stream_called is True
+
+        finally:
+            app.dependency_overrides.pop(get_ai_client, None)

@@ -310,6 +310,79 @@ async def store_document_vectors(
     return len(points)
 
 
+async def store_image_vectors(
+    user_id: uuid.UUID,
+    document_id: uuid.UUID,
+    filename: str,
+    image_metadata: list[dict],
+    session_id: uuid.UUID | None = None,
+) -> int:
+    """
+    Generate descriptions for each image, generate their embeddings,
+    and store them in Qdrant.
+    
+    image_metadata: list[dict] where each item is {"base64_image": str, "page_number": int}
+    """
+    from app.ai.services.vision_service import describe_image
+
+    if not image_metadata:
+        return 0
+
+    points: list[PointStruct] = []
+
+    for idx, meta in enumerate(image_metadata):
+        b64 = meta["base64_image"]
+        page_num = meta["page_number"]
+
+        try:
+            description = await describe_image(b64)
+            if not description:
+                continue
+
+            formatted_text = f"[Image Description - Page {page_num}]: {description}"
+
+            embedding = await get_ollama_embedding(formatted_text, prefix_type="document")
+
+            points.append(
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=embedding,
+                    payload={
+                        "user_id": str(user_id),
+                        "document_id": str(document_id),
+                        "session_id": str(session_id) if session_id else None,
+                        "filename": filename,
+                        "text": formatted_text,
+                        "chunk_index": idx + 10000,  # Offset to prevent index collision
+                        "type": "image_description",
+                        "page_number": page_num,
+                    },
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to process and store image vector for page %d of document %s: %s",
+                page_num,
+                document_id,
+                exc,
+            )
+
+    if points:
+        await qdrant_client.upsert(
+            collection_name=settings.qdrant_collection,
+            points=points,
+        )
+        logger.info(
+            "Stored %d visual description vectors for document %s (user %s).",
+            len(points),
+            document_id,
+            user_id,
+        )
+        return len(points)
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Retrieval
 # ---------------------------------------------------------------------------

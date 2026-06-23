@@ -54,6 +54,10 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    # Qdrant configurations
    QDRANT_URL=http://localhost:6333
    QDRANT_COLLECTION=user_documents
+   
+   # Vision RAG configurations
+   ENABLE_VISION_RAG=True
+   OLLAMA_VISION_MODEL=qwen3-vl:2b
    ```
    *(For a zero-setup SQLite database, run `pip install aiosqlite` and use `DATABASE_URL=sqlite+aiosqlite:///./local_dev.db`)*
 
@@ -79,6 +83,9 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
 
    # Pull the chat model (e.g. qwen3.5:4b, llama3.2:3b, or deepseek-r1)
    ollama pull qwen3.5:4b
+
+   # Pull the vision model (used for page re-inspection fallback)
+   ollama pull qwen3-vl:2b
    ```
 
 7. **Set up Local Email Catcher (SMTP):**
@@ -201,26 +208,28 @@ Once the server is running (either locally or via Docker), you can test the APIs
 
 ## Running Automated Tests
 
-### Running Tests Locally:
-To run all tests:
-```bash
-pytest
-```
+Tests are categorized into **live integration tests** (which require running local databases, Qdrant, and Ollama) and **in-memory mocked unit tests**.
 
-To run specific test modules:
-```bash
-pytest tests/test_chat_rag.py -s -v
-pytest app/auth/tests -v
-```
+### Running Tests Locally:
+* **Run ONLY Mocked Unit/CI Tests (Default, runs instantly without local services):**
+  ```bash
+  pytest -m "not live"
+  ```
+* **Run ONLY Live Integration Tests (requires running local services):**
+  ```bash
+  pytest -m "live"
+  ```
+* **Run all tests:**
+  ```bash
+  pytest
+  ```
 
 ### Running Tests inside Docker:
-To run all tests inside the container environment:
-```bash
-docker compose exec web pytest
-```
-
-To run specific tests inside the container:
-```bash
-docker compose exec web pytest tests/test_chat_rag.py -s -v
-docker compose exec web pytest app/auth/tests -v
-```
+* **Run only unit tests inside Docker container:**
+  ```bash
+  docker compose exec web pytest -m "not live"
+  ```
+* **Run only live integration tests inside Docker container:**
+  ```bash
+  docker compose exec web pytest -m "live"
+  ```

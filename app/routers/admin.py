@@ -5,6 +5,12 @@ Requires is_admin=True on the authenticated user.
 
 """
 
+#todo anybody seeing this 
+# after person 2 completes this file app/services/dashboard_service.py
+# import   from app.services.dashboard_service import invalidate_dashboard_cache
+# call     await invalidate_dashboard_cache(str(user.id)) in router.delete section
+
+
 import csv
 import io
 import secrets
