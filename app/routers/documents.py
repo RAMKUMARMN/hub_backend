@@ -103,6 +103,7 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List all documents belonging to the current authenticated user."""
     result = await db.execute(
         select(Document)
         .where(Document.user_id == current_user.id)
@@ -117,6 +118,7 @@ async def delete_document(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Delete a document from disk, remove its vector embeddings from ChromaDB, and drop the DB record."""
     result = await db.execute(
         select(Document).where(
             Document.id == document_id, Document.user_id == current_user.id
@@ -126,7 +128,12 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # Clean up file storage
     await delete_file(doc.storage_path)
+    
+    # Clean up vector database embeddings
     await delete_document_chunks(current_user.id, document_id)
+    
+    # Remove metadata row from database
     await db.delete(doc)
     await db.commit()

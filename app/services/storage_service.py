@@ -32,7 +32,9 @@ async def save_file(file_bytes: bytes, filename: str, user_id: uuid.UUID) -> str
     user_dir.mkdir(parents=True, exist_ok=True)
     dest = user_dir / unique_name
     dest.write_bytes(file_bytes)
-    return str(dest.relative_to(UPLOAD_DIR.resolve()))
+    
+    # Fix: Resolve 'dest' to an absolute path before running relative_to against UPLOAD_DIR
+    return str(dest.resolve().relative_to(UPLOAD_DIR.resolve()))
 
 
 async def delete_file(storage_path: str) -> None:
