@@ -1,0 +1,10 @@
+{
+    "id": "trace-hybrid-retrieval",
+    "name": "trace-hybrid-retrieval",
+    "type": "skill",
+    "repository": "hub_backend",
+    "enabled": true,
+    "version": "1.0.0",
+    "mcp_server": "",
+    "tool": ""
+}

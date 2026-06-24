@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # AI Service — handles LLM, RAG, document extraction
     ai_service_url: str = "http://localhost:8003"
+    n8n_webhook_url: str = "http://localhost:5678/webhook/document-summary"
 
     # Notify Service
     notify_service_url: str = "http://localhost:8001"
@@ -47,9 +48,14 @@ class Settings(BaseSettings):
     s3_bucket_name: str = "cixiohub-uploads"  # alias kept for compat
 
     # SMTP / Email
-    smtp_host: str = "localhost"
-    smtp_port: int = 1025
-    smtp_from_email: str = "noreply@hub.cixio.dev"
+    # SMTP / Email
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+
+    smtp_username: str = ""
+    smtp_password: str = ""
+
+    smtp_from: str = ""
 
     # Google OAuth (optional)
     google_client_id: str = ""

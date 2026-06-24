@@ -1,4 +1,3 @@
--- Active: 1779623948719@@127.0.0.1@5432
 FROM python:3.11-slim
 
 WORKDIR /app
