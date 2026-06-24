@@ -5,6 +5,7 @@ from app.schemas.auth import (
     RefreshRequest,
     UserResponse,
     UpdateProfileRequest,
+    GoogleLoginRequest,
 )
 from app.schemas.chat import (
     CreateSessionRequest,
@@ -22,7 +23,9 @@ __all__ = [
     "RefreshRequest",
     "UserResponse",
     "UpdateProfileRequest",
+    "GoogleLoginRequest",
     "CreateSessionRequest",
+
     "SessionResponse",
     "SendMessageRequest",
     "MessageResponse",

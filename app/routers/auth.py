@@ -3,6 +3,7 @@ Auth router — /api/v1/auth/*
 
 Students: implement each TODO endpoint.
 """
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from app.schemas.auth import (
     TokenResponse,
     UpdateProfileRequest,
     UserResponse,
+    GoogleLoginRequest,
 )
 from app.services.auth_service import (
     create_access_token,
@@ -24,6 +26,7 @@ from app.services.auth_service import (
     decode_token,
     hash_password,
     verify_password,
+    verify_google_token,
 )
 from app.services.storage_service import save_file
 
@@ -154,3 +157,53 @@ async def upload_avatar(
     await db.commit()
     await db.refresh(current_user)
     return current_user
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_login(body: GoogleLoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Authenticate a user via Google ID token.
+    1. Verify the Google ID token.
+    2. Check if a user with the Google email already exists.
+    3. If they exist, log them in.
+    4. If they don't exist, create a new user with a random password.
+    5. Return JWT access + refresh tokens.
+    """
+    payload = await verify_google_token(body.id_token)
+    if not payload:
+        raise HTTPException(status_code=400, detail="Invalid Google token")
+
+    email = payload.get("email")
+    full_name = payload.get("name", "Google User")
+    picture = payload.get("picture")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Email not provided by Google")
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # User doesn't exist, register them with a random secure password
+        random_pass = secrets.token_urlsafe(32)
+        user = User(
+            email=email,
+            full_name=full_name,
+            hashed_password=hash_password(random_pass),
+            avatar_url=picture,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    elif picture and not user.avatar_url:
+        # Update avatar if they don't have one
+        user.avatar_url = picture
+        await db.commit()
+        await db.refresh(user)
+
+    token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
+    return TokenResponse(
+        access_token=create_access_token(token_data),
+        refresh_token=create_refresh_token(token_data),
+    )
+

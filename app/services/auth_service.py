@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
+import httpx
 from jose import JWTError, jwt
 
 from app.config import settings
@@ -36,3 +37,31 @@ def create_refresh_token(data: dict[str, Any]) -> str:
 def decode_token(token: str) -> dict[str, Any]:
     """Decode and validate a JWT. Raises JWTError on failure."""
     return jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+
+
+async def verify_google_token(id_token: str) -> dict[str, Any] | None:
+    """
+    Verify Google ID token via Google's OAuth2 API.
+    Returns payload if valid, otherwise None.
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": id_token},
+                timeout=10
+            )
+            if response.status_code != 200:
+                return None
+            
+            payload = response.json()
+            aud = payload.get("aud")
+            
+            # Verify the audience matches our google_client_id if configured
+            if settings.google_client_id and aud != settings.google_client_id:
+                return None
+                
+            return payload
+        except Exception:
+            return None
+

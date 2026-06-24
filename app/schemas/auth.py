@@ -42,3 +42,8 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
     device_token: str | None = None  # FCM/APNs push token
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
+
