@@ -54,3 +54,9 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
     device_token: str | None = None  # FCM/APNs push notification token
+
+
+class GoogleLoginRequest(BaseModel):
+    """Request body for POST /auth/google — client sends the Google ID token."""
+    id_token: str
+

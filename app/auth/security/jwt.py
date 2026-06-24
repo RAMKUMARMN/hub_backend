@@ -15,9 +15,11 @@ JWT Payload contract (agreed by all 4 devs):
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import httpx
 from jose import jwt
 
 from app.config import settings
+
 
 
 def create_access_token(data: dict[str, Any]) -> str:
@@ -55,3 +57,31 @@ def verify_token(token: str) -> dict[str, Any] | None:
         return decode_token(token)
     except JWTError:
         return None
+
+
+async def verify_google_token(id_token: str) -> dict[str, Any] | None:
+    """
+    Verify Google ID token via Google's OAuth2 tokeninfo API.
+    Returns the user info payload if valid, otherwise None.
+    """
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                "https://oauth2.googleapis.com/tokeninfo",
+                params={"id_token": id_token},
+                timeout=10
+            )
+            if response.status_code != 200:
+                return None
+
+            payload = response.json()
+            aud = payload.get("aud")
+
+            # Verify the audience matches our google_client_id if configured
+            if settings.google_client_id and aud != settings.google_client_id:
+                return None
+
+            return payload
+        except Exception:
+            return None
+
