@@ -640,6 +640,7 @@ async def search_relevant_chunks(
                 exc_info=settings.debug,
             )
 
+    semantic_results = []
     if retrieval_mode in {"semantic", "hybrid"}:
         semantic_results = await _semantic_candidates(
             user_id=user_id,
@@ -655,6 +656,7 @@ async def search_relevant_chunks(
                 "keyword_score": _keyword_score(payload, keywords),
             }
 
+    keyword_results = []
     if retrieval_mode in {"keyword", "hybrid"}:
         keyword_results = await _keyword_candidates(
             user_id=user_id,
@@ -678,14 +680,32 @@ async def search_relevant_chunks(
     if retrieval_mode == "keyword" and not candidates:
         return []
 
+    # Map candidate keys to their rank index (1-based)
+    semantic_ranks = {
+        _result_key(payload): rank
+        for rank, (payload, _) in enumerate(semantic_results, start=1)
+    }
+    keyword_ranks = {
+        _result_key(payload): rank
+        for rank, (payload, _) in enumerate(keyword_results, start=1)
+    }
+
     reranked = []
-    for item in candidates.values():
+    for key, item in candidates.items():
         payload = item["payload"]
         semantic_score = item["semantic_score"]
         keyword_score = item["keyword_score"]
 
         if retrieval_mode == "hybrid":
-            base_score = (semantic_score * 0.65) + (keyword_score * 0.35)
+            r_sem = semantic_ranks.get(key)
+            r_key = keyword_ranks.get(key)
+            
+            score_sem = 1.0 / (60.0 + r_sem) if r_sem else 0.0
+            score_key = 1.0 / (60.0 + r_key) if r_key else 0.0
+            
+            # Normalize RRF base score to [0, 1] range to match scale of boosts.
+            # Max possible score is 1/61 + 1/61 = 2/61. Multiply by 30.5 to normalize.
+            base_score = (score_sem + score_key) * 30.5
         elif retrieval_mode == "keyword":
             base_score = keyword_score
         else:
