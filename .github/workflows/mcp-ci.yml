@@ -1,0 +1,32 @@
+name: MCP Server CI
+
+on:
+  push:
+    branches:
+      - cg1
+  pull_request:
+    branches:
+      - cg1
+
+jobs:
+  mcp-server:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: mcp_hub_backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build MCP Server
+        run: npm run build
