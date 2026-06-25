@@ -70,9 +70,11 @@ async def test_search_tavily_success():
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = mock_response
         result = await search_tavily("test query")
-        assert "Test Title" in result
-        assert "https://test.com" in result
-        assert "Test Content" in result
+        lines = result.splitlines()
+        assert len(lines) >= 3
+        assert lines[0] == "Source: https://test.com"
+        assert lines[1] == "Title: Test Title"
+        assert lines[2] == "Snippet: Test Content"
         mock_post.assert_called_once()
 
 @pytest.mark.asyncio

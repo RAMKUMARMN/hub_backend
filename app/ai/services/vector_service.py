@@ -597,6 +597,7 @@ async def search_relevant_chunks(
     allowed_document_ids: list[uuid.UUID] | None = None,
     session_id: uuid.UUID | None = None,
     selected_document_ids: list[uuid.UUID] | None = None,
+    use_reranker: bool = False,
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -623,7 +624,7 @@ async def search_relevant_chunks(
 
     keywords = _query_keywords(query)
     has_boosting = bool(session_id or keywords or selected_document_ids)
-    candidate_limit = max(limit * 3, 15) if has_boosting or retrieval_mode == "hybrid" else limit
+    candidate_limit = max(limit * 4, 25) if (has_boosting or retrieval_mode == "hybrid" or use_reranker) else limit
 
     candidates: dict[tuple[str, int], dict] = {}
     semantic_query = query
@@ -691,42 +692,93 @@ async def search_relevant_chunks(
     }
 
     reranked = []
-    for key, item in candidates.items():
-        payload = item["payload"]
-        semantic_score = item["semantic_score"]
-        keyword_score = item["keyword_score"]
+    if use_reranker and candidates:
+        from app.ai.services.reranker_service import rerank_candidates
+        import math
 
-        if retrieval_mode == "hybrid":
-            r_sem = semantic_ranks.get(key)
-            r_key = keyword_ranks.get(key)
-            
-            score_sem = 1.0 / (60.0 + r_sem) if r_sem else 0.0
-            score_key = 1.0 / (60.0 + r_key) if r_key else 0.0
-            
-            # Normalize RRF base score to [0, 1] range to match scale of boosts.
-            # Max possible score is 1/61 + 1/61 = 2/61. Multiply by 30.5 to normalize.
-            base_score = (score_sem + score_key) * 30.5
-        elif retrieval_mode == "keyword":
-            base_score = keyword_score
-        else:
-            base_score = semantic_score
+        # Prepare candidates for reranking
+        items_to_rerank = []
+        for key, item in candidates.items():
+            payload = item["payload"]
+            semantic_score = item["semantic_score"]
+            keyword_score = item["keyword_score"]
 
-        final_score = _boosted_score(
-            payload=payload,
-            base_score=base_score,
-            keywords=keywords,
-            session_id=session_id,
-            selected_document_ids=selected_document_ids,
-        )
-        match_type = retrieval_mode
-        if retrieval_mode == "hybrid":
-            if semantic_score and keyword_score:
-                match_type = "hybrid"
-            elif semantic_score:
-                match_type = "semantic"
+            match_type = retrieval_mode
+            if retrieval_mode == "hybrid":
+                if semantic_score and keyword_score:
+                    match_type = "hybrid"
+                elif semantic_score:
+                    match_type = "semantic"
+                else:
+                    match_type = "keyword"
+            
+            items_to_rerank.append({
+                "key": key,
+                "text": payload.get("text", ""),
+                "payload": payload,
+                "match_type": match_type,
+            })
+
+        # Run model inference (thread-safe, does not block event loop)
+        reranked_items = await rerank_candidates(query, items_to_rerank)
+
+        for item in reranked_items:
+            payload = item["payload"]
+            match_type = item["match_type"]
+            logit_score = item["rerank_score"]
+
+            # Map raw logit score to [0, 1] using Sigmoid
+            try:
+                sigmoid_score = 1.0 / (1.0 + math.exp(-logit_score))
+            except OverflowError:
+                sigmoid_score = 0.0 if logit_score < 0 else 1.0
+
+            final_score = _boosted_score(
+                payload=payload,
+                base_score=sigmoid_score,
+                keywords=keywords,
+                session_id=session_id,
+                selected_document_ids=selected_document_ids,
+            )
+            reranked.append((payload, final_score, match_type))
+    else:
+        # Standard scoring path (RRF / Semantic / Keyword)
+        for key, item in candidates.items():
+            payload = item["payload"]
+            semantic_score = item["semantic_score"]
+            keyword_score = item["keyword_score"]
+
+            if retrieval_mode == "hybrid":
+                r_sem = semantic_ranks.get(key)
+                r_key = keyword_ranks.get(key)
+                
+                score_sem = 1.0 / (60.0 + r_sem) if r_sem else 0.0
+                score_key = 1.0 / (60.0 + r_key) if r_key else 0.0
+                
+                # Normalize RRF base score to [0, 1] range to match scale of boosts.
+                # Max possible score is 1/61 + 1/61 = 2/61. Multiply by 30.5 to normalize.
+                base_score = (score_sem + score_key) * 30.5
+            elif retrieval_mode == "keyword":
+                base_score = keyword_score
             else:
-                match_type = "keyword"
-        reranked.append((payload, final_score, match_type))
+                base_score = semantic_score
+
+            final_score = _boosted_score(
+                payload=payload,
+                base_score=base_score,
+                keywords=keywords,
+                session_id=session_id,
+                selected_document_ids=selected_document_ids,
+            )
+            match_type = retrieval_mode
+            if retrieval_mode == "hybrid":
+                if semantic_score and keyword_score:
+                    match_type = "hybrid"
+                elif semantic_score:
+                    match_type = "semantic"
+                else:
+                    match_type = "keyword"
+            reranked.append((payload, final_score, match_type))
 
     reranked.sort(key=lambda item: item[1], reverse=True)
 

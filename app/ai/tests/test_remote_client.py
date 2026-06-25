@@ -67,3 +67,34 @@ async def test_remote_client_store_image_vectors():
         assert call_kwargs["json"]["image_metadata"] == image_metadata
         assert call_kwargs["json"]["session_id"] == str(session_id)
         assert "/api/v1/documents/ingest_images" in mock_post.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_remote_client_search_relevant_chunks():
+    client = RemoteAIClient()
+    user_id = uuid.uuid4()
+    query = "rerank search"
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "results": [{"text": "matching content", "filename": "doc.txt"}]
+    }
+
+    with patch("httpx.AsyncClient.post") as mock_post:
+        mock_post.return_value = mock_response
+
+        results = await client.search_relevant_chunks(
+            user_id=user_id,
+            query=query,
+            use_reranker=True,
+        )
+
+        assert len(results) == 1
+        assert results[0]["filename"] == "doc.txt"
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args[1]
+        assert call_kwargs["json"]["user_id"] == str(user_id)
+        assert call_kwargs["json"]["query"] == query
+        assert call_kwargs["json"]["use_reranker"] is True
+        assert "/api/v1/documents/search" in mock_post.call_args[0][0]

@@ -128,6 +128,7 @@ class RemoteAIClient(AIClient):
         allowed_document_ids: list[uuid.UUID] | None = None,
         session_id: uuid.UUID | None = None,
         selected_document_ids: list[uuid.UUID] | None = None,
+        use_reranker: bool = False,
     ) -> list[dict]:
         async with self._get_client() as client:
             response = await client.post(
@@ -141,6 +142,7 @@ class RemoteAIClient(AIClient):
                     "allowed_document_ids": [str(d) for d in allowed_document_ids] if allowed_document_ids else None,
                     "session_id": str(session_id) if session_id else None,
                     "selected_document_ids": [str(d) for d in selected_document_ids] if selected_document_ids else None,
+                    "use_reranker": use_reranker,
                 },
             )
             response.raise_for_status()
