@@ -63,7 +63,8 @@ async def unified_web_search(query: str, max_results: int = 3) -> str:
             exc
         )
         try:
-            return search_duckduckgo(query, max_results=max_results)
+            import asyncio
+            return await asyncio.to_thread(search_duckduckgo, query, max_results=max_results)
         except Exception as ddg_exc:
             logger.error("DuckDuckGo fallback search also failed: %s", ddg_exc)
             return "Error: Web search is temporarily unavailable."
