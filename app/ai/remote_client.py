@@ -82,9 +82,17 @@ class RemoteAIClient(AIClient):
         messages: list[dict],
         tools: list[dict] | None = None,
     ) -> dict:
-        import logging
-        logging.getLogger(__name__).warning("chat_with_tools is not supported in RemoteAIClient")
-        return {"role": "assistant", "content": ""}
+        """One-shot chat completion with support for tool/function calling."""
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/chat/tools",
+                json={
+                    "messages": messages,
+                    "tools": tools,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["message"]
 
     async def store_image_vectors(
         self,
@@ -94,9 +102,21 @@ class RemoteAIClient(AIClient):
         image_metadata: list[dict],
         session_id: uuid.UUID | None = None,
     ) -> int:
-        import logging
-        logging.getLogger(__name__).warning("store_image_vectors is not supported in RemoteAIClient")
-        return 0
+        """Process, describe, embed, and store image vectors for a document."""
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/documents/ingest_images",
+                json={
+                    "user_id": str(user_id),
+                    "document_id": str(document_id),
+                    "filename": filename,
+                    "image_metadata": image_metadata,
+                    "session_id": str(session_id) if session_id else None,
+                },
+            )
+            response.raise_for_status()
+            res_data = response.json()
+            return res_data.get("chunks_stored") or res_data.get("images_stored") or 0
 
     async def search_relevant_chunks(
         self,
