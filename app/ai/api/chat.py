@@ -202,6 +202,7 @@ async def _process_chat_message_and_stream(
     db: AsyncSession,
     ai_client: AIClient,
     document_ids: list[uuid.UUID] | None = None,
+    use_reranker: bool = False,
 ) -> StreamingResponse:
     """
     Core messaging and streaming logic shared between POST and GET endpoints.
@@ -318,6 +319,7 @@ async def _process_chat_message_and_stream(
                         allowed_document_ids=[latest_image.id],
                         session_id=session_id,
                         selected_document_ids=[latest_image.id],
+                        use_reranker=use_reranker,
                     )
 
             # Standard semantic search
@@ -330,6 +332,7 @@ async def _process_chat_message_and_stream(
                 allowed_document_ids=allowed_doc_ids,
                 session_id=session_id,
                 selected_document_ids=document_ids,
+                use_reranker=use_reranker,
             )
 
             # Merge forced image descriptions at the beginning of the list, removing duplicates
@@ -711,6 +714,7 @@ async def send_message(
         background_tasks=background_tasks,
         db=db,
         ai_client=ai_client,
+        use_reranker=body.use_reranker,
     )
 
 
@@ -727,6 +731,7 @@ async def stream_messages_get(
     retrieval_mode: str = "semantic",
     rag_chunk_limit: int = 4,
     document_ids: str | None = None,
+    use_reranker: bool = False,
     db: AsyncSession = Depends(get_db),
     ai_client: AIClient = Depends(get_ai_client),
 ):
@@ -778,4 +783,5 @@ async def stream_messages_get(
         background_tasks=background_tasks,
         db=db,
         ai_client=ai_client,
+        use_reranker=use_reranker,
     )

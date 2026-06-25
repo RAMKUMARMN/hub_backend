@@ -1002,6 +1002,9 @@ async def test_automatic_session_image_recall(authenticated_client):
         async def chat_stream(self, messages):
             yield "Response"
 
+        async def chat_with_tools(self, messages, tools=None):
+            return {"role": "assistant", "content": "Response"}
+
     fake_ai = FakeAIClient()
     app.dependency_overrides[get_ai_client] = lambda: fake_ai
 
@@ -1040,7 +1043,8 @@ async def test_automatic_session_image_recall(authenticated_client):
             use_hyde=False,
             allowed_document_ids=[image_doc_id],
             session_id=session_id,
-            selected_document_ids=[image_doc_id]
+            selected_document_ids=[image_doc_id],
+            use_reranker=False,
         )
     finally:
         app.dependency_overrides.pop(get_ai_client, None)

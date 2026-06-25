@@ -27,6 +27,7 @@ class SendMessageRequest(BaseModel):
     retrieval_mode: Literal["semantic", "keyword", "hybrid"] = "semantic"
     rag_chunk_limit: int = Field(default=4, ge=4, le=64)
     document_ids: list[uuid.UUID] | None = None
+    use_reranker: bool = False
 
     """
     Optional list of specific document IDs to restrict RAG search to.

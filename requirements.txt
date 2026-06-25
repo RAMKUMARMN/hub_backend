@@ -24,3 +24,5 @@ cloudinary==1.44.2
 pymupdf>=1.23.0
 pillow>=10.0.0
 ddgs>=6.1.7
+sentence-transformers>=3.0.0
+torch>=2.0.0
