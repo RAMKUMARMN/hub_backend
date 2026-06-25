@@ -56,3 +56,14 @@ class UpdateProfileRequest(BaseModel):
     full_name: str | None = None
     phone: str | None = None
     device_token: str | None = None  # FCM/APNs push token
+
+class LoginOtpResponse(BaseModel):
+    message: str
+    phone: str
+
+class EmailRequest(BaseModel):
+    email: EmailStr
+
+class EmailOtpVerifyRequest(BaseModel):
+    email: EmailStr
+    otp: str
