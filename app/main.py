@@ -61,7 +61,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",  # Next.js dev (default)
         "http://localhost:3003",  # Next.js dev (CixioHub port)
-        "http://localhost:8080",  # Flutter web dev
+        "http://localhost:8080",  # Flutter web dev (localhost)
+        "http://127.0.0.1:8080",  # Flutter web dev (IP address)
     ],
     allow_credentials=True,
     allow_methods=["*"],
