@@ -39,19 +39,39 @@ async def chat_stream(
                 "model": settings.ollama_model,
                 "messages": messages,
                 "stream": True,
+                "options": {
+                    "num_ctx": 16384,
+                    "num_predict": 8192,
+                },
             },
         ) as response:
             response.raise_for_status()
+            in_thinking = False
             async for line in response.aiter_lines():
                 if not line:
                     continue
                 try:
                     parsed = json.loads(line)
-                    token: str = parsed.get("message", {}).get("content", "")
-                    if token:
-                        yield token
+                    message = parsed.get("message", {})
+                    
+                    thinking_token = message.get("thinking", "")
+                    content_token = message.get("content", "")
+                    
+                    if thinking_token:
+                        if not in_thinking:
+                            in_thinking = True
+                            yield "<think>"
+                        yield thinking_token
+                    elif content_token:
+                        if in_thinking:
+                            in_thinking = False
+                            yield "</think>"
+                        yield content_token
                 except (json.JSONDecodeError, KeyError):
                     continue
+            
+            if in_thinking:
+                yield "</think>"
 
 
 async def summarize_text(text: str) -> str:
@@ -98,6 +118,10 @@ async def chat_with_tools(
         "model": settings.ollama_model,
         "messages": messages,
         "stream": False,
+        "options": {
+            "num_ctx": 16384,
+            "num_predict": 8192,
+        },
     }
     if tools:
         payload["tools"] = tools

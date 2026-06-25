@@ -194,6 +194,7 @@ async def _process_chat_message_and_stream(
     content: str,
     use_rag: bool,
     use_hyde: bool,
+    web_search: bool,
     thinking_mode: bool,
     retrieval_mode: str,
     rag_chunk_limit: int,
@@ -365,8 +366,12 @@ async def _process_chat_message_and_stream(
         )
 
     # 7. Assemble the full message list for the LLM.
+    from datetime import datetime
+    current_time_str = datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
+    time_prefix = f"Current date and time: {current_time_str}.\n\n"
+
     ollama_messages = [
-        {"role": "system", "content": system_instruction}
+        {"role": "system", "content": time_prefix + system_instruction}
     ] + chat_history
 
     # Capture ids needed inside the async generator closure.
@@ -387,6 +392,7 @@ async def _process_chat_message_and_stream(
 
         direct_content = None
 
+        tools = []
         if use_rag and has_visual_chunks:
             reinspect_tool = {
                 "type": "function",
@@ -418,138 +424,202 @@ async def _process_chat_message_and_stream(
                     }
                 }
             }
-            
+            tools.append(reinspect_tool)
+
+        from app.config import settings as app_settings
+        if web_search or app_settings.enable_web_search:
+            web_search_tool = {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": (
+                        "Search the web for real-time information, news, current events, live scores, or general facts."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "The search query term."
+                            }
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+            tools.append(web_search_tool)
+
+        if tools:
             try:
-                response_msg = await ai_client.chat_with_tools(ollama_messages, tools=[reinspect_tool])
-                tool_calls = response_msg.get("tool_calls")
-                
-                if tool_calls:
-                    ollama_messages.append(response_msg)
+                # Execute up to 3 sequential tool call turns
+                max_turns = 3
+                executed_tool_calls = set()
+                for turn in range(max_turns):
+                    response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools)
+                    tool_calls = response_msg.get("tool_calls")
                     
-                    for tool_call in tool_calls:
-                        func_name = tool_call.get("function", {}).get("name")
-                        if func_name == "reinspect_document_page":
+                    if tool_calls:
+                        # Check for duplicate tool calls to prevent infinite loops (or mock loops in tests)
+                        has_duplicate = False
+                        for tool_call in tool_calls:
+                            func_name = tool_call.get("function", {}).get("name")
+                            args = tool_call.get("function", {}).get("arguments", {})
+                            args_str = json.dumps(args, sort_keys=True) if isinstance(args, dict) else str(args)
+                            call_key = (func_name, args_str)
+                            if call_key in executed_tool_calls:
+                                logger.warning("Duplicate tool call detected: %s with args %s. Breaking tool loop.", func_name, args_str)
+                                has_duplicate = True
+                                break
+                            executed_tool_calls.add(call_key)
+                        
+                        if has_duplicate:
+                            direct_content = response_msg.get("content", "")
+                            break
+
+                        # Append the assistant's message with tool calls to the history
+                        ollama_messages.append(response_msg)
+                        
+                        # Process each tool call
+                        for tool_call in tool_calls:
+                            func_name = tool_call.get("function", {}).get("name")
                             args = tool_call.get("function", {}).get("arguments", {})
                             if isinstance(args, str):
                                 try:
                                     args = json.loads(args)
                                 except Exception:
                                     args = {}
-                            
-                            doc_id_str = args.get("document_id")
-                            page_num = args.get("page_number")
-                            specific_question = args.get("specific_question")
-                            
-                            doc_id = None
-                            if doc_id_str:
-                                try:
-                                    doc_id = uuid.UUID(doc_id_str)
-                                except ValueError:
-                                    pass
-                            
-                            if not doc_id:
-                                for chunk in matching_data:
-                                    if "[Image Description" in chunk.get("text", "") and chunk.get("document_id"):
-                                        try:
-                                            doc_id = uuid.UUID(chunk["document_id"])
-                                            break
-                                        except ValueError:
-                                            continue
-                            
-                            reinspect_result = ""
-                            if doc_id:
-                                async with AsyncSessionLocal() as db_session:
-                                    doc_res = await db_session.execute(
-                                        select(Document).where(
-                                            Document.id == doc_id,
-                                            Document.user_id == current_user.id
+
+                            tool_result = ""
+                            if func_name == "reinspect_document_page":
+                                doc_id_str = args.get("document_id")
+                                page_num = args.get("page_number")
+                                specific_question = args.get("specific_question")
+                                
+                                doc_id = None
+                                if doc_id_str:
+                                    try:
+                                        doc_id = uuid.UUID(doc_id_str)
+                                    except ValueError:
+                                        pass
+                                
+                                if not doc_id:
+                                    for chunk in matching_data:
+                                        if "[Image Description" in chunk.get("text", "") and chunk.get("document_id"):
+                                            try:
+                                                doc_id = uuid.UUID(chunk["document_id"])
+                                                break
+                                            except ValueError:
+                                                continue
+                                
+                                if doc_id:
+                                    async with AsyncSessionLocal() as db_session:
+                                        doc_res = await db_session.execute(
+                                            select(Document).where(
+                                                Document.id == doc_id,
+                                                Document.user_id == current_user.id
+                                            )
                                         )
-                                    )
-                                    doc_obj = doc_res.scalar_one_or_none()
-                                    if doc_obj:
-                                        storage_path = doc_obj.storage_path
-                                        is_url = storage_path.startswith("http://") or storage_path.startswith("https://")
-                                        local_pdf_path = ""
-                                        temp_file_path = None
-                                        
-                                        try:
-                                            if is_url:
-                                                async with httpx.AsyncClient() as client:
-                                                    resp = await client.get(storage_path)
-                                                    resp.raise_for_status()
-                                                    import tempfile
-                                                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{doc_obj.file_type}")
-                                                    temp_file.write(resp.content)
-                                                    temp_file.close()
-                                                    temp_file_path = temp_file.name
-                                                    local_pdf_path = temp_file_path
-                                            else:
-                                                from pathlib import Path
-                                                local_pdf_path = str(Path("uploads") / storage_path)
+                                        doc_obj = doc_res.scalar_one_or_none()
+                                        if doc_obj:
+                                            storage_path = doc_obj.storage_path
+                                            is_url = storage_path.startswith("http://") or storage_path.startswith("https://")
+                                            local_pdf_path = ""
+                                            temp_file_path = None
                                             
-                                            from app.ai.services import vision_service
-                                            from app.config import settings
-                                            page_number = int(page_num) if page_num else 1
-                                            
-                                            if doc_obj.file_type in ("png", "jpg", "jpeg"):
-                                                from pathlib import Path
-                                                if temp_file_path:
-                                                    img_bytes = Path(temp_file_path).read_bytes()
+                                            try:
+                                                if is_url:
+                                                    async with httpx.AsyncClient() as client:
+                                                        resp = await client.get(storage_path)
+                                                        resp.raise_for_status()
+                                                        import tempfile
+                                                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{doc_obj.file_type}")
+                                                        temp_file.write(resp.content)
+                                                        temp_file.close()
+                                                        temp_file_path = temp_file.name
+                                                        local_pdf_path = temp_file_path
                                                 else:
-                                                    img_bytes = Path(local_pdf_path).read_bytes()
-                                                compressed = vision_service.process_and_compress_image(img_bytes)
-                                                import base64
-                                                b64_str = base64.b64encode(compressed).decode("utf-8")
+                                                    from pathlib import Path
+                                                    local_pdf_path = str(Path("uploads") / storage_path)
                                                 
-                                                prompt = (
-                                                    f"Look at this image. Answer the following question based on the visual contents: {specific_question}"
-                                                )
+                                                from app.ai.services import vision_service
+                                                page_number = int(page_num) if page_num else 1
                                                 
-                                                async with httpx.AsyncClient(timeout=120) as client:
-                                                    response = await client.post(
-                                                        f"{settings.ollama_base_url}/api/generate",
-                                                        json={
-                                                            "model": settings.ollama_vision_model,
-                                                            "prompt": prompt,
-                                                            "images": [b64_str],
-                                                            "stream": False,
-                                                            "options": {
-                                                                "num_ctx": 4096,
-                                                            },
-                                                            "keep_alive": "10s",
-                                                        }
+                                                if doc_obj.file_type in ("png", "jpg", "jpeg"):
+                                                    from pathlib import Path
+                                                    if temp_file_path:
+                                                        img_bytes = Path(temp_file_path).read_bytes()
+                                                    else:
+                                                        img_bytes = Path(local_pdf_path).read_bytes()
+                                                    compressed = vision_service.process_and_compress_image(img_bytes)
+                                                    import base64
+                                                    b64_str = base64.b64encode(compressed).decode("utf-8")
+                                                    
+                                                    prompt = (
+                                                        f"Look at this image. Answer the following question based on the visual contents: {specific_question}"
                                                     )
-                                                    response.raise_for_status()
-                                                    reinspect_result = response.json().get("response", "").strip()
-                                            else:
-                                                reinspect_result = await vision_service.reinspect_page(
-                                                    pdf_path=local_pdf_path,
-                                                    page_number=page_number,
-                                                    specific_question=specific_question
-                                                )
-                                        except Exception as e:
-                                            logger.error("Error in reinspect_page: %s", e, exc_info=True)
-                                            reinspect_result = f"Error during visual reinspection: {str(e)}"
-                                        finally:
-                                            import os
-                                            if temp_file_path and os.path.exists(temp_file_path):
-                                                try:
-                                                    os.unlink(temp_file_path)
-                                                except Exception:
-                                                    pass
-                            
-                            if not reinspect_result:
-                                reinspect_result = "No additional details found on page or document not found."
-                            
+                                                    
+                                                    async with httpx.AsyncClient(timeout=120) as client:
+                                                        response = await client.post(
+                                                            f"{app_settings.ollama_base_url}/api/generate",
+                                                            json={
+                                                                "model": app_settings.ollama_vision_model,
+                                                                "prompt": prompt,
+                                                                "images": [b64_str],
+                                                                "stream": False,
+                                                                "options": {
+                                                                    "num_ctx": 4096,
+                                                                },
+                                                                "keep_alive": "10s",
+                                                            }
+                                                        )
+                                                        response.raise_for_status()
+                                                        tool_result = response.json().get("response", "").strip()
+                                                else:
+                                                    tool_result = await vision_service.reinspect_page(
+                                                        pdf_path=local_pdf_path,
+                                                        page_number=page_number,
+                                                        specific_question=specific_question
+                                                    )
+                                            except Exception as e:
+                                                logger.error("Error in reinspect_page: %s", e, exc_info=True)
+                                                tool_result = f"Error during visual reinspection: {str(e)}"
+                                            finally:
+                                                import os
+                                                if temp_file_path and os.path.exists(temp_file_path):
+                                                    try:
+                                                        os.unlink(temp_file_path)
+                                                    except Exception:
+                                                        pass
+                                
+                                if not tool_result:
+                                    tool_result = "No additional details found on page or document not found."
+
+                            elif func_name == "web_search":
+                                query_arg = args.get("query")
+                                if query_arg:
+                                    from app.ai.services.search_service import unified_web_search
+                                    try:
+                                        tool_result = await unified_web_search(query_arg)
+                                    except Exception as e:
+                                        logger.error("Error in unified_web_search: %s", e, exc_info=True)
+                                        tool_result = f"Error during web search: {str(e)}"
+                                else:
+                                    tool_result = "Error: search query argument is missing."
+
+                            else:
+                                tool_result = f"Error: unknown tool '{func_name}'."
+
                             tool_msg = {
                                 "role": "tool",
-                                "content": reinspect_result
+                                "content": tool_result
                             }
                             if "id" in tool_call:
                                 tool_msg["tool_call_id"] = tool_call["id"]
                             ollama_messages.append(tool_msg)
-                else:
-                    direct_content = response_msg.get("content", "")
+                    else:
+                        # No tool calls, the model has finished reasoning
+                        direct_content = response_msg.get("content", "")
+                        break
             except Exception as exc:
                 logger.error("Failed to execute tool-calling loop: %s", exc, exc_info=True)
                 direct_content = None
@@ -633,6 +703,7 @@ async def send_message(
         content=body.content,
         use_rag=body.use_rag,
         use_hyde=body.use_hyde,
+        web_search=body.web_search,
         thinking_mode=body.thinking_mode,
         retrieval_mode=body.retrieval_mode,
         rag_chunk_limit=body.rag_chunk_limit,
@@ -651,6 +722,7 @@ async def stream_messages_get(
     background_tasks: BackgroundTasks,
     use_rag: bool = False,
     use_hyde: bool = False,
+    web_search: bool = False,
     thinking_mode: bool = True,
     retrieval_mode: str = "semantic",
     rag_chunk_limit: int = 4,
@@ -698,6 +770,7 @@ async def stream_messages_get(
         content=content,
         use_rag=use_rag,
         use_hyde=use_hyde,
+        web_search=web_search,
         thinking_mode=thinking_mode,
         retrieval_mode=retrieval_mode,
         rag_chunk_limit=rag_chunk_limit,
