@@ -1,81 +1,115 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.todo import Todo
-from app.models.user_notification import UserNotification
-from app.services.email_service import send_email
 from app.models.user import User
+from app.models.user_notification import UserNotification
+from app.queue.producer import publish_notification
+from app.queue.schemas import NotifyPayload
+
+TODO_DUE_SOON = "TODO_DUE_SOON"
 
 
-async def create_due_soon_notifications(db: AsyncSession, manager):
-    now = datetime.utcnow()
+async def create_due_soon_notifications(
+    db: AsyncSession,
+    manager,
+) -> None:
+    """
+    Runs every 5 minutes.
+
+    Creates:
+    1. In-app notification
+    2. WebSocket notification
+    3. Email notification queued through RabbitMQ
+    """
+
+    now = datetime.now(timezone.utc)
     soon = now + timedelta(hours=24)
 
-    # STEP 1: Get due todos
     result = await db.execute(
-        select(Todo).where(
-            Todo.completed == False,
-            Todo.due_date <= soon,
+        select(Todo, User)
+        .join(User, User.id == Todo.user_id)
+        .where(
+            Todo.completed.is_(False),
+            Todo.due_date.is_not(None),
             Todo.due_date >= now,
+            Todo.due_date <= soon,
         )
     )
 
-    todos = result.scalars().all()
+    rows = result.all()
 
-    for todo in todos:
+    for todo, user in rows:
 
-        # STEP 2: Prevent duplicate notifications
         existing = await db.execute(
-            select(UserNotification).where(
+            select(UserNotification.id).where(
                 UserNotification.todo_id == todo.id,
-                UserNotification.notification_type == "TODO_DUE_SOON",
+                UserNotification.notification_type == TODO_DUE_SOON,
             )
         )
 
         if existing.scalar_one_or_none():
-            continue  # skip duplicates
+            continue
 
-        # STEP 3: Create DB notification
-        notification = UserNotification(
-            user_id=todo.user_id,
-            todo_id=todo.id,
-            title="Deadline Approaching",
-            message=f"Todo '{todo.title}' is due soon!",
-            notification_type="TODO_DUE_SOON",
-        )
+        title = "Deadline Approaching"
+        message = f'Your task "{todo.title}" is due within 24 hours.'
 
-        db.add(notification)
-
-        # STEP 4: WebSocket push
-        await manager.send_notification(
-            print("SENDING WEBSOCKET NOTIFICATION TO", todo.user_id),
-            str(todo.user_id),
-            {
-                "type": "TODO_DUE_SOON",
-                "title": "Deadline Approaching",
-                "message": f"Todo '{todo.title}' is due soon!",
-                "todo_id": str(todo.id),
-            },
-        )
-
-        # STEP 5: Email (safe fallback)
-        try:
-            # IMPORTANT: ensure relationship exists OR fetch user
-            user_result = await db.execute(
-                select(User).where(User.id == todo.user_id)
+        db.add(
+            UserNotification(
+                user_id=todo.user_id,
+                todo_id=todo.id,
+                title=title,
+                message=message,
+                notification_type=TODO_DUE_SOON,
             )
-            user = user_result.scalar_one_or_none()
+        )
 
-            if user:
-                await send_email(
-                    to_email=user.email,
-                    subject="⏰ Todo Deadline Reminder",
-                    body=f"Your todo '{todo.title}' is due soon!",
+        # -------------------------
+        # WebSocket notification
+        # -------------------------
+        try:
+            await manager.send_notification(
+                str(todo.user_id),
+                {
+                    "type": TODO_DUE_SOON,
+                    "title": title,
+                    "message": message,
+                    "todo_id": str(todo.id),
+                    "priority": todo.priority,
+                    "due_date": (
+                        todo.due_date.isoformat()
+                        if todo.due_date
+                        else None
+                    ),
+                },
+            )
+        except Exception as e:
+            print(f"WebSocket failed: {e}")
+
+        # -------------------------
+        # Queue Email
+        # -------------------------
+        try:
+            await publish_notification(
+                NotifyPayload(
+                    channel="email",
+                    recipient=user.email,
+                    subject=f"Reminder: {todo.title} is due soon",
+                    body=(
+                        f'Your task "{todo.title}" is due within 24 hours.\n\n'
+                        f"Priority: {todo.priority}\n"
+                        f"Due Date: {todo.due_date}"
+                    ),
+                    data={
+                        "todo_id": str(todo.id),
+                        "type": TODO_DUE_SOON,
+                    },
                 )
+            )
 
         except Exception as e:
-            print("EMAIL FAILED:", e)
+            print(f"Could not queue email reminder: {e}")
 
     await db.commit()
