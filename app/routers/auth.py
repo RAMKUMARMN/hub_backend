@@ -47,25 +47,88 @@ from app.services.storage_service import save_file
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Register a new user account with duplicate email and phone checks.
-    """
-    # Use .limit(1) and .scalar() to avoid MultipleResultsFound error
-    existing_user = await db.execute(
-        select(User).where(
-            or_(
-                User.email == body.email,
-                (User.phone == body.phone) if body.phone else False
-            )
-        ).limit(1)
-    )
-    
-    if existing_user.scalar():
+@router.post("/phone_number_verification")
+async def phone_number_verification(request: PhoneRequest):
+    phone = request.phone
+
+    if not phone:
         raise HTTPException(
-            status_code=400, 
-            detail="Email or phone number already registered"
+            status_code=400,
+            detail="Phone number is required"
+        )
+
+    otp = str(random.randint(100000, 999999))
+
+    redis_client.setex(
+        f"register_otp:{phone}",
+        300,
+        otp
+    )
+
+    print(f"\n>>> REGISTRATION OTP FOR {phone}: {otp} <<<\n")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "http://localhost:8001/api/v1/notify/send",
+                json={
+                    "channel": "sms",
+                    "recipient": phone,
+                    "body": f"Your registration OTP is {otp}"
+                }
+            )
+    except Exception:
+        print("Notify service unavailable.")
+        print(f"Fallback OTP: {otp}")
+
+    return {
+        "message": "OTP sent successfully"
+    }
+
+@router.post("/verify-registration-otp")
+async def verify_registration_otp(
+    body: OtpVerifyRequest
+):
+    stored_otp = redis_client.get(
+        f"register_otp:{body.phone}"
+    )
+
+    if isinstance(stored_otp, bytes):
+        stored_otp = stored_otp.decode()
+
+    if not stored_otp or stored_otp != body.otp:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired OTP"
+        )
+
+    redis_client.delete(
+        f"register_otp:{body.phone}"
+    )
+
+    return {
+        "message": "OTP verified successfully"
+    }
+
+@router.post(
+    "/register",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED
+)
+async def register(
+    body: RegisterRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    existing = await db.execute(
+        select(User).where(
+            User.email == body.email
+        )
+    )
+
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered"
         )
 
     # Create user
@@ -73,15 +136,21 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
         email=body.email,
         full_name=body.full_name,
         phone=body.phone,
-        hashed_password=hash_password(body.password),
+        hashed_password=hash_password(
+            body.password
+        ),
     )
+
     db.add(user)
+
     await db.commit()
     await db.refresh(user)
-    
-    # Notify service logic
+
     try:
-        async with httpx.AsyncClient(base_url=settings.notify_service_url, timeout=30) as client:
+        async with httpx.AsyncClient(
+            base_url=settings.notify_service_url,
+            timeout=30
+        ) as client:
             await client.post(
                 "/api/v1/notify/send",
                 json={
@@ -188,22 +257,110 @@ async def verify_otp(body: OtpVerifyRequest, db: AsyncSession = Depends(get_db))
         access_token=create_access_token(token_data),
         refresh_token=create_refresh_token(token_data),
     )
-@router.post("/verify-phoneno-and-register")
-async def verify_phoneno_and_register(
+
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
+
+    if not verify_password(
+        body.password,
+        user.hashed_password
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid credentials"
+        )
+
+    otp = str(random.randint(100000, 999999))
+
+    redis_client.setex(
+        f"login_otp:{user.phone}",
+        300,
+        otp
+    )
+
+    print(
+        f"\n>>> LOGIN OTP FOR {user.phone}: {otp} <<<\n"
+    )
+
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                "http://localhost:8001/api/v1/notify/send",
+                json={
+                    "channel": "sms",
+                    "recipient": user.phone,
+                    "body": f"Your login OTP is {otp}"
+                }
+            )
+    except Exception:
+        print("Notify service unavailable.")
+        print(f"Fallback OTP: {otp}")
+
+    return {
+        "message": "OTP sent",
+        "phone": user.phone
+    }
+
+@router.post(
+    "/verify-otp",
+    response_model=TokenResponse
+)
+async def verify_otp(
     body: OtpVerifyRequest,
     db: AsyncSession = Depends(get_db)
 ):
-    phone = body.phone
-    otp = body.otp
-    
-    stored_otp = redis_client.get(f"otp:{phone}")
-    
-    if not stored_otp or stored_otp != otp:
-        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    stored_otp = redis_client.get(
+        f"login_otp:{body.phone}"
+    )
 
-    redis_client.delete(f"otp:{phone}")
-    
-    return {"message": "OTP verified. You can now proceed to registration."}
+    if isinstance(stored_otp, bytes):
+        stored_otp = stored_otp.decode()
+
+    if not stored_otp or stored_otp != body.otp:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired OTP"
+        )
+
+    redis_client.delete(
+        f"login_otp:{body.phone}"
+    )
+
+    result = await db.execute(
+        select(User).where(
+            User.phone == body.phone
+        )
+    )
+
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    token_data = {
+        "sub": str(user.id),
+        "email": user.email,
+        "is_admin": user.is_admin,
+    }
+
+    return TokenResponse(
+        access_token=create_access_token(
+            token_data
+        ),
+        refresh_token=create_refresh_token(
+            token_data
+        ),
+    )
+
+
 
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):

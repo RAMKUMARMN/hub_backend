@@ -51,12 +51,16 @@ async def chat_stream(
                 if not line.startswith("data: "):
                     continue
                 data = line[6:].strip()
+                print("RAW DATA:", data)
                 if data == "[DONE]":
                     return
                 try:
                     parsed = json.loads(data)
-                    delta = parsed.get("delta", "")
+
+                    delta = parsed.get("delta") or parsed.get("content", "")
+
                     if delta:
+                        print("STREAM TOKEN:", delta)  # debug
                         yield delta
                 except json.JSONDecodeError:
                     continue
