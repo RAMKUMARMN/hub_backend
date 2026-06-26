@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 class CreateSessionRequest(BaseModel):
     title: str = "New Chat"
 
+class UpdateSessionRequest(BaseModel):
+    title: str
+
 
 class SessionResponse(BaseModel):
     id: uuid.UUID
