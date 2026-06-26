@@ -1002,6 +1002,9 @@ async def test_automatic_session_image_recall(authenticated_client):
         async def chat_stream(self, messages):
             yield "Response"
 
+        async def chat_with_tools(self, messages, tools=None):
+            return {"role": "assistant", "content": "Response"}
+
     fake_ai = FakeAIClient()
     app.dependency_overrides[get_ai_client] = lambda: fake_ai
 
@@ -1040,7 +1043,8 @@ async def test_automatic_session_image_recall(authenticated_client):
             use_hyde=False,
             allowed_document_ids=[image_doc_id],
             session_id=session_id,
-            selected_document_ids=[image_doc_id]
+            selected_document_ids=[image_doc_id],
+            use_reranker=False,
         )
     finally:
         app.dependency_overrides.pop(get_ai_client, None)
@@ -1088,34 +1092,40 @@ async def test_agentic_reinspection_fallback(authenticated_client):
                     "match_type": "semantic"
                 }
             ])
-            self.chat_with_tools = AsyncMock(return_value={
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "id": "call_fallback_123",
-                        "type": "function",
-                        "function": {
-                            "name": "reinspect_document_page",
-                            "arguments": {
-                                "document_id": str(doc_id),
-                                "page_number": 3,
-                                "specific_question": "What is the yield value for 2021?"
+            self.calls = 0
+
+        async def chat_with_tools(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_fallback_123",
+                            "type": "function",
+                            "function": {
+                                "name": "reinspect_document_page",
+                                "arguments": {
+                                    "document_id": str(doc_id),
+                                    "page_number": 3,
+                                    "specific_question": "What is the yield value for 2021?"
+                                }
                             }
                         }
-                    }
-                ]
-            })
-            self.chat_stream_called = False
-
-        async def chat_stream(self, messages):
-            self.chat_stream_called = True
-            # Check that the tool response message is indeed appended to the messages sent to the stream
-            has_tool_msg = any(msg.get("role") == "tool" and "15 tons per acre" in msg.get("content") for msg in messages)
-            if has_tool_msg:
-                yield "In 2021, the crop yield was 15 tons per acre."
+                    ]
+                }
             else:
-                yield "Standard response without tool context."
+                has_tool_msg = any(msg.get("role") == "tool" and "15 tons per acre" in msg.get("content") for msg in messages)
+                if has_tool_msg:
+                    content = "In 2021, the crop yield was 15 tons per acre."
+                else:
+                    content = "Standard response without tool context."
+                return {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": None
+                }
 
     fake_ai = FakeAIClient()
     app.dependency_overrides[get_ai_client] = lambda: fake_ai
@@ -1153,13 +1163,12 @@ async def test_agentic_reinspection_fallback(authenticated_client):
             assert "15 tons per acre" in full_text
 
             # Assertions on tool invocation
-            fake_ai.chat_with_tools.assert_called_once()
+            assert fake_ai.calls == 2
             mock_reinspect.assert_called_once_with(
                 pdf_path="uploads/documents/test/report.pdf",
                 page_number=3,
                 specific_question="What is the yield value for 2021?"
             )
-            assert fake_ai.chat_stream_called is True
 
         finally:
             app.dependency_overrides.pop(get_ai_client, None)

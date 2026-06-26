@@ -72,3 +72,13 @@ def mock_rate_limiter():
     """Mock the fastapi-limiter to avoid dependency on Redis during tests."""
     RateLimiter.__call__ = AsyncMock(return_value=None)
 
+
+@pytest.fixture(autouse=True)
+def _disable_web_search_by_default():
+    """Disable web search during tests so standard chat tests use chat_stream
+    instead of chat_with_tools.  Tests that need web search (e.g.
+    test_search_tool.py) explicitly set settings.enable_web_search = True."""
+    original = settings.enable_web_search
+    settings.enable_web_search = False
+    yield
+    settings.enable_web_search = original

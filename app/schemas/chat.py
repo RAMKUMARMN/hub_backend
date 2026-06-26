@@ -22,10 +22,13 @@ class SendMessageRequest(BaseModel):
     content: str
     use_rag: bool = False
     use_hyde: bool = False
+    web_search: bool = False
     thinking_mode: bool = True
     retrieval_mode: Literal["semantic", "keyword", "hybrid"] = "semantic"
     rag_chunk_limit: int = Field(default=4, ge=4, le=64)
     document_ids: list[uuid.UUID] | None = None
+    use_reranker: bool = False
+
     """
     Optional list of specific document IDs to restrict RAG search to.
     Only documents that are global (no session) or belong to the current session
