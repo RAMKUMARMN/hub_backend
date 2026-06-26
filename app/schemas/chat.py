@@ -1,11 +1,16 @@
 import uuid
 from datetime import datetime
 
+
+
 from pydantic import BaseModel
 
 
 class CreateSessionRequest(BaseModel):
     title: str = "New Chat"
+
+class UpdateSessionRequest(BaseModel):
+    title: str
 
 
 class SessionResponse(BaseModel):

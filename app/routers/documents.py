@@ -144,3 +144,29 @@ async def delete_document(
     await delete_document_chunks(current_user.id, document_id)
     await db.delete(doc)
     await db.commit()
+
+@router.patch("/{document_id}/processed")
+async def mark_document_processed(
+    document_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Document).where(Document.id == document_id)
+    )
+
+    doc = result.scalar_one_or_none()
+
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found",
+        )
+
+    doc.processed = True
+
+    await db.commit()
+
+    return {
+        "status": "completed",
+        "document_id": str(document_id),
+    }
