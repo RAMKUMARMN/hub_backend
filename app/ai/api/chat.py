@@ -19,7 +19,7 @@ import logging
 import uuid
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,6 +40,117 @@ from app.ai.client import AIClient, get_ai_client
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+class ThinkTagParser:
+    def __init__(self, thinking_mode: bool):
+        self.thinking_mode = thinking_mode
+        self.buffer = ""
+        self.is_thinking = False
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        self.buffer += chunk
+        events = []
+
+        while True:
+            if not self.is_thinking:
+                idx = self.buffer.find("<think>")
+                if idx != -1:
+                    normal_text = self.buffer[:idx]
+                    if normal_text:
+                        events.append(("delta", normal_text))
+                    self.buffer = self.buffer[idx + 7:]
+                    self.is_thinking = True
+                    continue
+                
+                prefix_found = False
+                for length in range(6, 0, -1):
+                    prefix = "<think"[:length]
+                    if self.buffer.endswith(prefix):
+                        normal_text = self.buffer[:-length]
+                        if normal_text:
+                            events.append(("delta", normal_text))
+                        self.buffer = prefix
+                        prefix_found = True
+                        break
+                if prefix_found:
+                    break
+                
+                if self.buffer:
+                    events.append(("delta", self.buffer))
+                    self.buffer = ""
+                break
+
+            else:
+                idx = self.buffer.find("</think>")
+                if idx != -1:
+                    thinking_text = self.buffer[:idx]
+                    if thinking_text and self.thinking_mode:
+                        events.append(("thinking", thinking_text))
+                    self.buffer = self.buffer[idx + 8:]
+                    self.is_thinking = False
+                    continue
+
+                prefix_found = False
+                for length in range(7, 0, -1):
+                    prefix = "</think"[:length]
+                    if self.buffer.endswith(prefix):
+                        thinking_text = self.buffer[:-length]
+                        if thinking_text and self.thinking_mode:
+                            events.append(("thinking", thinking_text))
+                        self.buffer = prefix
+                        prefix_found = True
+                        break
+                if prefix_found:
+                    break
+
+                if self.buffer:
+                    if self.thinking_mode:
+                        events.append(("thinking", self.buffer))
+                    self.buffer = ""
+                break
+
+        return events
+
+    def finalize(self) -> list[tuple[str, str]]:
+        events = []
+        if self.buffer:
+            if self.is_thinking:
+                if self.thinking_mode:
+                    events.append(("thinking", self.buffer))
+            else:
+                events.append(("delta", self.buffer))
+            self.buffer = ""
+        return events
+
+
+def sanitize_content(content: str) -> str:
+    """
+    Sanitize raw assistant response text to strip stray thought tags, instructions,
+    and trailing template fragments leaked by local models.
+    """
+    if not content:
+        return ""
+    import re
+    # Remove stray </think> tags
+    content = re.sub(r"<\s*/\s*think\s*>", "", content, flags=re.IGNORECASE)
+    # Remove stray <think> tags
+    content = re.sub(r"<\s*think\s*>", "", content, flags=re.IGNORECASE)
+    # Clean up standard template leakage instructions
+    content = re.sub(
+        r'tags"\s*before\s*providing\s*your\s*final\s*answer\."\s*So\s*I\s*will\s*generate\s*the\s*thought\s*block\s*first\.',
+        "",
+        content,
+        flags=re.IGNORECASE
+    )
+    # Clean up remaining instruction artifacts
+    content = re.sub(
+        r'Respond\s*directly\.\s*Do\s*not\s*output\s*any\s*reasoning\s*or\s*step-by-step\s*thinking.*',
+        "",
+        content,
+        flags=re.IGNORECASE
+    )
+    return content.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +204,14 @@ async def delete_session(
 @router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
 async def get_messages(
     session_id: uuid.UUID,
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     # Verify the session belongs to the authenticated user.
     result = await db.execute(
         select(ChatSession).where(
@@ -234,10 +350,11 @@ async def _process_chat_message_and_stream(
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     )
-    chat_history = [
-        {"role": m.role, "content": m.content}
-        for m in reversed(history_result.scalars().all())
-    ]
+    chat_history = []
+    for m in reversed(history_result.scalars().all()):
+        if m.role == "assistant" and not m.content:
+            continue
+        chat_history.append({"role": m.role, "content": m.content or ""})
 
     # 4. Count active (unsummarized) messages to decide if summarization should be triggered.
     msg_count_result = await db.execute(
@@ -361,7 +478,8 @@ async def _process_chat_message_and_stream(
     # 6.5. Inject thinking mode instruction.
     if thinking_mode:
         system_instruction += (
-            "\n\nYou may think step by step and output your reasoning inside <think>...</think> tags before answering."
+            "\n\nCRITICAL: You MUST think step by step and output your reasoning inside <think>...</think> tags before providing your final answer. "
+            "Write at least 2-3 sentences explaining your thought process inside the tags."
         )
     else:
         system_instruction += (
@@ -382,6 +500,7 @@ async def _process_chat_message_and_stream(
 
     async def event_generator():
         full_response = ""
+        full_thinking = ""
 
         # A. Emit source citations as the very first SSE event (RAG only).
         if matching_data:
@@ -430,7 +549,7 @@ async def _process_chat_message_and_stream(
             tools.append(reinspect_tool)
 
         from app.config import settings as app_settings
-        if web_search or app_settings.enable_web_search:
+        if web_search:
             web_search_tool = {
                 "type": "function",
                 "function": {
@@ -628,34 +747,35 @@ async def _process_chat_message_and_stream(
                 direct_content = None
 
         # B. Stream tokens from the AI module.
-        is_thinking = False
         try:
+            parser = ThinkTagParser(thinking_mode=thinking_mode)
             if direct_content is not None:
                 import asyncio
                 chunk_size = 8
                 for i in range(0, len(direct_content), chunk_size):
                     token = direct_content[i : i + chunk_size]
-                    full_response += token
-                    yield f"data: {json.dumps({'delta': token})}\n\n"
+                    for event_type, content_text in parser.feed(token):
+                        if event_type == "thinking":
+                            full_thinking += content_text
+                        else:
+                            full_response += content_text
+                        yield f"data: {json.dumps({event_type: content_text})}\n\n"
                     await asyncio.sleep(0.01)
             else:
                 async for token in ai_client.chat_stream(ollama_messages):
-                    # Detect DeepSeek-R1 <think> reasoning block boundaries.
-                    if "<think>" in token:
-                        is_thinking = True
-                        token = token.replace("<think>", "")
-                    if "</think>" in token:
-                        is_thinking = False
-                        token = token.replace("</think>", "")
-
-                    if token:
-                        full_response += token
-                        if is_thinking:
-                            # Stream thinking tokens with a separate key so
-                            # the frontend can render them differently.
-                            yield f"data: {json.dumps({'thinking': token})}\n\n"
+                    for event_type, content_text in parser.feed(token):
+                        if event_type == "thinking":
+                            full_thinking += content_text
                         else:
-                            yield f"data: {json.dumps({'delta': token})}\n\n"
+                            full_response += content_text
+                        yield f"data: {json.dumps({event_type: content_text})}\n\n"
+            
+            for event_type, content_text in parser.finalize():
+                if event_type == "thinking":
+                    full_thinking += content_text
+                else:
+                    full_response += content_text
+                yield f"data: {json.dumps({event_type: content_text})}\n\n"
 
         except httpx.ConnectError:
             error_msg = (
@@ -674,7 +794,9 @@ async def _process_chat_message_and_stream(
             assistant_msg = ChatMessage(
                 session_id=_session_id,
                 role="assistant",
-                content=full_response,
+                content=sanitize_content(full_response),
+                thinking=full_thinking if full_thinking else None,
+                sources=matching_data if matching_data else None,
             )
             write_db.add(assistant_msg)
             await write_db.commit()
