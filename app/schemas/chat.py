@@ -42,6 +42,8 @@ class MessageResponse(BaseModel):
     session_id: uuid.UUID
     role: str
     content: str
+    thinking: str | None = None
+    sources: list[dict] | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

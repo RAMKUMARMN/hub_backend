@@ -254,6 +254,43 @@ async def list_documents(
     return result.scalars().all()
 
 
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download or stream the file content.
+    For Cloudinary, redirects to the secure URL.
+    For local files, returns a FileResponse.
+    """
+    import os
+    from fastapi.responses import FileResponse, RedirectResponse
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id, Document.user_id == current_user.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.storage_path.startswith("http://") or doc.storage_path.startswith("https://"):
+        return RedirectResponse(doc.storage_path)
+
+    file_path = os.path.join("uploads", doc.storage_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(
+        path=file_path,
+        filename=doc.filename,
+        media_type="application/octet-stream"
+    )
+
+
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     document_id: uuid.UUID,
