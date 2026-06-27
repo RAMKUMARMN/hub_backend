@@ -6,17 +6,20 @@ from app.config import settings
 
 # Intercept DATABASE_URL to use the isolated test database
 original_url = settings.database_url
-base_url, db_name = original_url.rsplit("/", 1)
 
-if "?" in db_name:
-    db_name, query = db_name.split("?", 1)
-    test_db_name = f"{db_name}_test"
-    test_url = f"{base_url}/{test_db_name}?{query}"
+if "sqlite" in original_url:
+    test_url = original_url
+    settings.database_url = test_url
 else:
-    test_db_name = f"{db_name}" if db_name.endswith("_test") else f"{db_name}_test"
-    test_url = f"{base_url}/{test_db_name}"
-
-settings.database_url = test_url
+    base_url, db_name = original_url.rsplit("/", 1)
+    if "?" in db_name:
+        db_name, query = db_name.split("?", 1)
+        test_db_name = f"{db_name}_test"
+        test_url = f"{base_url}/{test_db_name}?{query}"
+    else:
+        test_db_name = f"{db_name}" if db_name.endswith("_test") else f"{db_name}_test"
+        test_url = f"{base_url}/{test_db_name}"
+    settings.database_url = test_url
 
 
 def pytest_sessionstart(session):
@@ -24,6 +27,14 @@ def pytest_sessionstart(session):
     import asyncpg
     from alembic.config import Config
     from alembic import command
+
+    if "sqlite" in original_url:
+        print("🚀 Running migrations on test SQLite database...", end="")
+        alembic_cfg = Config("alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", test_url)
+        command.upgrade(alembic_cfg, "head")
+        print(" Done!\n")
+        return
 
     admin_url = f"{base_url}/postgres"
     db_owner = urlparse(original_url).username
@@ -41,10 +52,13 @@ def pytest_sessionstart(session):
         )
         if not exists:
             print(f"\n⚙️ Creating test database '{test_db_name}'...", end="")
-            await conn.execute(f'CREATE DATABASE "{test_db_name}";')
-            if db_owner:
-                await conn.execute(f'ALTER DATABASE "{test_db_name}" OWNER TO "{db_owner}";')
-            print(" Done!")
+            try:
+                await conn.execute(f'CREATE DATABASE "{test_db_name}";')
+                if db_owner:
+                    await conn.execute(f'ALTER DATABASE "{test_db_name}" OWNER TO "{db_owner}";')
+                print(" Done!")
+            except Exception as e:
+                print(f" Failed! (Proceeding assuming database already exists: {e})")
         await conn.close()
 
     asyncio.run(setup_test_db())
