@@ -3,7 +3,9 @@ Auth router — /api/v1/auth/*
 
 Students: implement each TODO endpoint.
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,10 +30,11 @@ from app.services.auth_service import (
 from app.services.storage_service import save_file
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
+limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, body: RegisterRequest, db: AsyncSession = Depends(get_db)):    
     """
     Register a new user account.
 
@@ -59,7 +62,8 @@ async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, body: LoginRequest, db: AsyncSession = Depends(get_db)):
     """
     Authenticate and return JWT tokens.
 
