@@ -40,13 +40,15 @@ class AuthService:
                 detail="Only institutional emails are allowed",
             )
 
+        from app.config import settings
+
         user = await self.user_repo.create(
             email=body.email,
             full_name=body.full_name,
             hashed_password=hash_password(body.password),
             phone=body.phone,
-            status="pending",
-            is_active=False,
+            status="active" if settings.debug else "pending",
+            is_active=True if settings.debug else False,
         )
 
         from app.auth.services.otp_service import OTPService

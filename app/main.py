@@ -28,6 +28,15 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Auto-create database tables on startup (perfect for zero-setup SQLite)
+    try:
+        from app.database import Base
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("Database tables initialized successfully.")
+    except Exception as e:
+        print("Error initializing database tables:", e)
+
     try:
         await FastAPILimiter.init(redis_client)
     except Exception as e:
