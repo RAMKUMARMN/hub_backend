@@ -21,6 +21,7 @@ from app.queue.producer import (
 )
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,12 @@ from datetime import UTC, datetime
 from app.services.dashboard_service import invalidate_dashboard_cache
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+class AdminUserUpdateRequest(BaseModel):
+    is_active: bool | None = None
+    is_admin: bool | None = None
+    status: str | None = None
 
 
 def _generate_temp_password(length: int = 12) -> str:
@@ -173,6 +180,31 @@ async def approve_user(
         "message": "User approved successfully",
         "user_id": str(user.id)
     }
+
+
+@router.patch("/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: uuid.UUID,
+    body: AdminUserUpdateRequest,
+    current_admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if body.is_active is not None:
+        user.is_active = body.is_active
+    if body.is_admin is not None:
+        user.is_admin = body.is_admin
+    if body.status is not None:
+        user.status = body.status
+
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
