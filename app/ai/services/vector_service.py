@@ -187,8 +187,8 @@ def get_clean_overlap(chunk: str, overlap: int) -> str:
 
 def chunk_text(
     text: str,
-    chunk_size: int = 800,
-    overlap: int = 100,
+    chunk_size: int = 1500,
+    overlap: int = 200,
 ) -> list[str]:
     """
     Paragraph-aware text chunker.
@@ -277,6 +277,7 @@ async def store_document_vectors(
 
     Returns the number of chunks stored.
     """
+    await init_qdrant_collection()
     chunks = chunk_text(text)
     if not chunks:
         logger.warning("Document %s produced no text chunks.", document_id)
@@ -323,6 +324,7 @@ async def store_image_vectors(
     
     image_metadata: list[dict] where each item is {"base64_image": str, "page_number": int}
     """
+    await init_qdrant_collection()
     from app.ai.services.vision_service import describe_image
 
     if not image_metadata:
@@ -335,31 +337,38 @@ async def store_image_vectors(
         page_num = meta["page_number"]
 
         try:
+            print(f"\n[Vision AI] Page {page_num}: Sending image to Ollama ({settings.ollama_vision_model}) for visual description...")
             description = await describe_image(b64)
             if not description:
+                print(f"[Vision AI] Page {page_num}: Received empty description from model.")
                 continue
 
+            print(f"[Vision AI] Page {page_num}: Description generated successfully! Chunking and embedding...")
             formatted_text = f"[Image Description - Page {page_num}]: {description}"
+            chunks = chunk_text(formatted_text, chunk_size=3000, overlap=300)
+            print(f"[Vision AI] Page {page_num}: Split description into {len(chunks)} chunks. Storing in Qdrant...")
 
-            embedding = await get_ollama_embedding(formatted_text, prefix_type="document")
-
-            points.append(
-                PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=embedding,
-                    payload={
-                        "user_id": str(user_id),
-                        "document_id": str(document_id),
-                        "session_id": str(session_id) if session_id else None,
-                        "filename": filename,
-                        "text": formatted_text,
-                        "chunk_index": idx + 10000,  # Offset to prevent index collision
-                        "type": "image_description",
-                        "page_number": page_num,
-                    },
+            for chunk_idx, chunk in enumerate(chunks):
+                embedding = await get_ollama_embedding(chunk, prefix_type="document")
+                points.append(
+                    PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=embedding,
+                        payload={
+                            "user_id": str(user_id),
+                            "document_id": str(document_id),
+                            "session_id": str(session_id) if session_id else None,
+                            "filename": filename,
+                            "text": chunk,
+                            "chunk_index": chunk_idx + 10000,  # Offset to prevent index collision
+                            "type": "image_description",
+                            "page_number": page_num,
+                        },
+                    )
                 )
-            )
+            print(f"[Vision AI] Page {page_num}: Chunks queued for Qdrant storage.")
         except Exception as exc:
+            print(f"[Vision AI] Page {page_num}: Error processing image: {exc}")
             logger.error(
                 "Failed to process and store image vector for page %d of document %s: %s",
                 page_num,
@@ -368,10 +377,12 @@ async def store_image_vectors(
             )
 
     if points:
+        print(f"[Vision AI] Upserting {len(points)} total vectors to Qdrant collection ({settings.qdrant_collection})...")
         await qdrant_client.upsert(
             collection_name=settings.qdrant_collection,
             points=points,
         )
+        print("[Vision AI] Qdrant upsert completed successfully!")
         logger.info(
             "Stored %d visual description vectors for document %s (user %s).",
             len(points),
@@ -615,6 +626,7 @@ async def search_relevant_chunks(
     These are forwarded directly to the SSE stream as a 'sources' event so the
     frontend can render clickable citation badges.
     """
+    await init_qdrant_collection()
     if allowed_document_ids is not None and not allowed_document_ids:
         return []
 
@@ -802,6 +814,7 @@ async def delete_document_vectors(
     Uses a compound filter (user_id AND document_id) so that a user can never
     accidentally delete vectors owned by someone else.
     """
+    await init_qdrant_collection()
     await qdrant_client.delete(
         collection_name=settings.qdrant_collection,
         points_selector=Filter(

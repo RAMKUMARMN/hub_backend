@@ -341,6 +341,7 @@ async def _process_chat_message_and_stream(
     await db.commit()
 
     # 3. Build chat history: last 10 messages (oldest first) that are not summarized.
+    # We prune history if it exceeds 32,000 characters (~8,000 tokens) to prevent prompt bloat.
     history_result = await db.execute(
         select(ChatMessage)
         .where(
@@ -350,11 +351,23 @@ async def _process_chat_message_and_stream(
         .order_by(ChatMessage.created_at.desc())
         .limit(10)
     )
+    
+    raw_history = history_result.scalars().all()
     chat_history = []
-    for m in reversed(history_result.scalars().all()):
+    char_count = 0
+    max_history_chars = 32000  # ~8,000 tokens limit for active prompt injection
+    
+    for m in raw_history:
         if m.role == "assistant" and not m.content:
             continue
+        msg_len = len(m.content or "")
+        # If adding this message exceeds our history budget, stop adding older ones
+        if char_count + msg_len > max_history_chars and len(chat_history) > 0:
+            break
         chat_history.append({"role": m.role, "content": m.content or ""})
+        char_count += msg_len
+        
+    chat_history.reverse()  # Order oldest first
 
     # 4. Count active (unsummarized) messages to decide if summarization should be triggered.
     msg_count_result = await db.execute(
@@ -576,8 +589,27 @@ async def _process_chat_message_and_stream(
                 # Execute up to 3 sequential tool call turns
                 max_turns = 3
                 executed_tool_calls = set()
+                parser = ThinkTagParser(thinking_mode=thinking_mode)
+                
                 for turn in range(max_turns):
                     response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools)
+                    
+                    # Yield intermediate thinking if the model wrote any
+                    thinking = response_msg.get("thinking", "")
+                    if thinking:
+                        import asyncio
+                        full_think_str = f"<think>{thinking}</think>"
+                        chunk_size = 8
+                        for i in range(0, len(full_think_str), chunk_size):
+                            token = full_think_str[i : i + chunk_size]
+                            for event_type, content_text in parser.feed(token):
+                                if event_type == "thinking":
+                                    full_thinking += content_text
+                                else:
+                                    full_response += content_text
+                                yield f"data: {json.dumps({event_type: content_text})}\n\n"
+                            await asyncio.sleep(0.01)
+                    
                     tool_calls = response_msg.get("tool_calls")
                     
                     if tool_calls:
@@ -615,7 +647,9 @@ async def _process_chat_message_and_stream(
                             if func_name == "reinspect_document_page":
                                 doc_id_str = args.get("document_id")
                                 page_num = args.get("page_number")
-                                specific_question = args.get("specific_question")
+                                specific_question = args.get("specific_question") or ""
+                                # Yield status update to frontend
+                                yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
                                 
                                 doc_id = None
                                 if doc_id_str:
@@ -680,7 +714,7 @@ async def _process_chat_message_and_stream(
                                                         f"Look at this image. Answer the following question based on the visual contents: {specific_question}"
                                                     )
                                                     
-                                                    async with httpx.AsyncClient(timeout=120) as client:
+                                                    async with httpx.AsyncClient(timeout=300) as client:
                                                         response = await client.post(
                                                             f"{app_settings.ollama_base_url}/api/generate",
                                                             json={
@@ -688,6 +722,7 @@ async def _process_chat_message_and_stream(
                                                                 "prompt": prompt,
                                                                 "images": [b64_str],
                                                                 "stream": False,
+                                                                "think": False,
                                                                 "options": {
                                                                     "num_ctx": 4096,
                                                                 },
@@ -719,6 +754,8 @@ async def _process_chat_message_and_stream(
                             elif func_name == "web_search":
                                 query_arg = args.get("query")
                                 if query_arg:
+                                    # Yield status update to frontend
+                                    yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
                                     from app.ai.services.search_service import unified_web_search
                                     try:
                                         tool_result = await unified_web_search(query_arg)
@@ -739,7 +776,8 @@ async def _process_chat_message_and_stream(
                                 tool_msg["tool_call_id"] = tool_call["id"]
                             ollama_messages.append(tool_msg)
                     else:
-                        # No tool calls, the model has finished reasoning
+                        # No tool calls, the model has finished reasoning.
+                        # The thinking was already streamed above, so we only need to stream content.
                         direct_content = response_msg.get("content", "")
                         break
             except Exception as exc:
@@ -748,7 +786,8 @@ async def _process_chat_message_and_stream(
 
         # B. Stream tokens from the AI module.
         try:
-            parser = ThinkTagParser(thinking_mode=thinking_mode)
+            if 'parser' not in locals():
+                parser = ThinkTagParser(thinking_mode=thinking_mode)
             if direct_content is not None:
                 import asyncio
                 chunk_size = 8
@@ -803,8 +842,10 @@ async def _process_chat_message_and_stream(
 
         yield "data: [DONE]\n\n"
 
-    # 8. After streaming, schedule summarization if the session has grown long.
-    if total_msg_count > 10:
+    # 8. After streaming, schedule summarization if the session has grown long (count > 10)
+    # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
+    history_chars = sum(len(m.get("content", "")) for m in chat_history)
+    if total_msg_count > 10 or history_chars > 40000:
         background_tasks.add_task(_summarize_and_prune, _session_id, ai_client)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

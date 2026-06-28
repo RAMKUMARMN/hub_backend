@@ -149,14 +149,18 @@ async def _process_document(
             if not doc:
                 return
 
+            print(f"\n[Ingestion] >>> Starting processing for file: '{filename}' (ID: {document_id})")
+            print(f"[Ingestion] Extracting text content from '{filename}' ({doc.file_type})...")
             text = await ai_client.extract_text(storage_path, doc.file_type)
 
             if not text.strip():
+                print(f"[Ingestion] Warning: Extracted text is empty for '{filename}'")
                 logger.warning(
                     "Document %s produced empty text — skipping vector storage.", document_id
                 )
             else:
                 # Chunk, embed, and store in Qdrant (multi-tenant, keyed by user_id).
+                print(f"[Ingestion] Chunking, embedding, and storing text for '{filename}'...")
                 chunks_stored = await ai_client.store_document_vectors(
                     user_id=user_id,
                     document_id=document_id,
@@ -164,6 +168,7 @@ async def _process_document(
                     filename=filename,
                     session_id=session_id,
                 )
+                print(f"[Ingestion] Successfully stored {chunks_stored} text chunks in Qdrant.")
                 logger.info(
                     "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
                 )
@@ -211,6 +216,7 @@ async def _process_document(
                         os.unlink(temp_file_path)
 
                     if visuals:
+                        print(f"[Ingestion] Document '{filename}' contains visual elements. Starting Vision RAG pipeline...")
                         images_stored = await ai_client.store_image_vectors(
                             user_id=user_id,
                             document_id=document_id,
@@ -218,12 +224,14 @@ async def _process_document(
                             image_metadata=visuals,
                             session_id=session_id,
                         )
+                        print(f"[Ingestion] Successfully processed and stored visual description for '{filename}' ({images_stored} pages).")
                         logger.info(
                             "Document %s: %d image descriptions stored in Qdrant.",
                             document_id,
                             images_stored,
                         )
                 except Exception as vision_exc:
+                    print(f"[Ingestion] Vision processing failed for document '{filename}': {vision_exc}")
                     logger.error(
                         "Vision processing failed for document %s: %s",
                         document_id,
@@ -234,6 +242,7 @@ async def _process_document(
             # Mark the document as ready for RAG queries.
             doc.processed = True
             await db.commit()
+            print(f"[Ingestion] <<< Finished processing for file: '{filename}' (ID: {document_id})\n")
 
         except Exception as exc:
             logger.error(

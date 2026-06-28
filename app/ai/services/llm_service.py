@@ -31,7 +31,7 @@ async def chat_stream(
 
     Raises httpx.ConnectError if Ollama is not reachable.
     """
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         async with client.stream(
             "POST",
             f"{settings.ollama_base_url}/api/chat",
@@ -41,8 +41,9 @@ async def chat_stream(
                 "stream": True,
                 "options": {
                     "num_ctx": 16384,
-                    "num_predict": 8192,
+                    "num_predict": -1,
                 },
+                "keep_alive": "5m",
             },
         ) as response:
             response.raise_for_status()
@@ -120,13 +121,14 @@ async def chat_with_tools(
         "stream": False,
         "options": {
             "num_ctx": 16384,
-            "num_predict": 8192,
+            "num_predict": -1,
         },
+        "keep_alive": "5m",
     }
     if tools:
         payload["tools"] = tools
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         try:
             response = await client.post(
                 f"{settings.ollama_base_url}/api/chat",
