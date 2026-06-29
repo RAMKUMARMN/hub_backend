@@ -14,6 +14,7 @@ from app.routers import (
     poll_router,
     todos_router,
 )
+from app.routers.notes import router as notes_router
 
 
 @asynccontextmanager
@@ -52,7 +53,7 @@ app.include_router(documents_router, prefix=PREFIX)
 app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
-
+app.include_router(notes_router, prefix=PREFIX)
 
 @app.get("/api/v1/health", tags=["health"])
 async def health():
