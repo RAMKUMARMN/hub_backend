@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "postgres": {
+      "type": "command",
+      "command": "npx",
+      "args": ["-y", "@itunified.io/mcp-postgres"],
+      "env": {
+        "POSTGRES_CONNECTION_STRING": "${DATABASE_URL}"
+      }
+    }
+  }
+}

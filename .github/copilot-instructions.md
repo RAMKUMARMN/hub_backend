@@ -1,6 +1,7 @@
 ---
 applyTo: "**/*.py"
 ---
+
 # Project coding standards for Python (FastAPI)
 
 Apply the [general coding guidelines](./general-coding.instructions.md) to all code.
@@ -33,3 +34,23 @@ Apply the [general coding guidelines](./general-coding.instructions.md) to all c
 - RAG queries use ChromaDB via `app/services/rag_service.py`
 - File storage uses S3-compatible API via `app/services/storage_service.py`
 - Queue messages published to RabbitMQ via aio-pika
+
+## Agent Guidelines
+
+This repository uses the following agents:
+
+| Agent | File | Purpose |
+|---|---|---|
+| `backend-agent` | `.github/agents/backend-agent.agent.md` | Coordinator — routes to single-task agents |
+| `backend-routers` | `.github/agents/backend-routers.agent.md` | FastAPI endpoints and Pydantic schemas |
+| `backend-database` | `.github/agents/backend-database.agent.md` | SQLAlchemy models and Alembic migrations |
+| `backend-integrations` | `.github/agents/backend-integrations.agent.md` | Service layer and external integrations |
+| `backend-planner` | `.github/agents/backend-planner.agent.md` | Implementation planning |
+| `backend-code-reviewer` | `.github/agents/backend-code-reviewer.agent.md` | Code review before merge |
+
+Prompts are in `.github/prompts/` and skills in `.agents/skills/`.
+
+When asking for help, prefix your request with the agent name:
+- "@backend-routers Add a GET /api/v1/workspaces endpoint"
+- "@backend-database Add a workspace table with migration"
+- "@backend-integrations Set up RabbitMQ notification consumer"
