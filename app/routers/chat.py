@@ -5,12 +5,12 @@ Students: implement the streaming message endpoint (POST /sessions/{id}/messages
 """
 import json
 import uuid
-
+from app.schemas.chat import UpdateSessionRequest
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.chat import ChatMessage, ChatSession
@@ -52,6 +52,35 @@ async def list_sessions(
         .order_by(ChatSession.updated_at.desc())
     )
     return result.scalars().all()
+
+@router.patch("/sessions/{session_id}")
+async def update_session(
+    session_id: str,
+    body: UpdateSessionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
+
+    session.title = body.title
+
+    await db.commit()
+    await db.refresh(session)
+
+    return session
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -169,3 +198,31 @@ async def send_message(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    class RenameSessionRequest(BaseModel):
+        title: str
+
+    @router.put("/sessions/{session_id}")
+    async def rename_session(
+        session_id: uuid.UUID,
+        body: RenameSessionRequest,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        result = await db.execute(
+            select(ChatSession).where(
+                ChatSession.id == session_id,
+                ChatSession.user_id == current_user.id,
+            )
+        )
+
+        session = result.scalar_one_or_none()
+
+        if not session:
+            raise HTTPException(404, "Session not found")
+
+        session.title = body.title
+
+        await db.commit()
+
+        return session

@@ -50,11 +50,14 @@ async def create_todo(
     db: AsyncSession = Depends(get_db),
 ):
     todo = Todo(
-        user_id=current_user.id,
-        title=body.title,
-        description=body.description,
-        due_date=body.due_date,
-    )
+    user_id=current_user.id,
+    title=body.title,
+    description=body.description,
+    due_date=body.due_date,
+    priority=body.priority,
+    reminder_at=body.reminder_at,
+    reminder_sent=False,
+)
 
     db.add(todo)
     await db.flush()
@@ -154,6 +157,13 @@ async def update_todo(
 
     if body.due_date is not None:
         todo.due_date = body.due_date
+    
+    if body.priority is not None:
+        todo.priority = body.priority
+
+    if "reminder_at" in body.model_fields_set:
+        todo.reminder_at = body.reminder_at
+        todo.reminder_sent = False
 
     await create_notification(
         db=db,
