@@ -72,6 +72,7 @@ class AIClient(Protocol):
         session_id: uuid.UUID | None = None,
         selected_document_ids: list[uuid.UUID] | None = None,
         use_reranker: bool = False,
+        include_meta: bool = False,
     ) -> list[dict]:
         """Search relevant document chunks by query similarity."""
         ...

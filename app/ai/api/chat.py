@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import uuid
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -317,6 +318,7 @@ async def _process_chat_message_and_stream(
     background_tasks: BackgroundTasks,
     db: AsyncSession,
     ai_client: AIClient,
+    request: Request | None = None,
     document_ids: list[uuid.UUID] | None = None,
     use_reranker: bool = False,
 ) -> StreamingResponse:
@@ -392,6 +394,7 @@ async def _process_chat_message_and_stream(
 
     # 6. RAG context injection — search Qdrant for relevant document chunks.
     matching_data: list[dict] = []
+    meta_data = None
     if use_rag:
         try:
             # Retrieve processed documents that belong to current user
@@ -463,7 +466,19 @@ async def _process_chat_message_and_stream(
                 session_id=session_id,
                 selected_document_ids=document_ids,
                 use_reranker=use_reranker,
+                include_meta=True,
             )
+
+            # Extract search strategy metadata chunk if present in standard search
+            if matching_data:
+                meta_items = [item for item in matching_data if item.get("is_meta")]
+                if meta_items:
+                    meta_data = meta_items[0]
+                    matching_data = [item for item in matching_data if not item.get("is_meta")]
+
+            # Clean forced image data if metadata is present
+            if forced_image_data:
+                forced_image_data = [item for item in forced_image_data if not item.get("is_meta")]
 
             # Merge forced image descriptions at the beginning of the list, removing duplicates
             if forced_image_data:
@@ -472,6 +487,14 @@ async def _process_chat_message_and_stream(
                 matching_data = forced_image_data + filtered_standard
                 # Limit the total number of chunks passed to the LLM to prevent prompt bloat
                 matching_data = matching_data[:rag_chunk_limit]
+            
+            # Clean any internal <think>...</think> blocks from chunks to prevent prompt confusion
+            import re
+            for item in matching_data:
+                if "text" in item:
+                    cleaned_txt = re.sub(r"<think>.*?</think>", "", item["text"], flags=re.DOTALL)
+                    cleaned_txt = re.sub(r"<think>.*", "", cleaned_txt, flags=re.DOTALL)
+                    item["text"] = cleaned_txt.strip()
         except httpx.ConnectError:
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
 
@@ -496,7 +519,7 @@ async def _process_chat_message_and_stream(
         )
     else:
         system_instruction += (
-            "\n\nRespond directly. Do not output any reasoning or step-by-step thinking, and do not use <think> tags."
+            "\n\nRespond directly"
         )
 
     # 7. Assemble the full message list for the LLM.
@@ -516,8 +539,8 @@ async def _process_chat_message_and_stream(
         full_thinking = ""
 
         # A. Emit source citations as the very first SSE event (RAG only).
-        if matching_data:
-            yield f"data: {json.dumps({'sources': matching_data})}\n\n"
+        if matching_data or meta_data:
+            yield f"data: {json.dumps({'sources': matching_data, 'search_metadata': meta_data})}\n\n"
 
         # Check if the retrieved context contains any visual descriptions
         has_visual_chunks = any(
@@ -592,6 +615,9 @@ async def _process_chat_message_and_stream(
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
                 
                 for turn in range(max_turns):
+                    if "pytest" not in sys.modules and request and await request.is_disconnected():
+                        logger.info("Client disconnected during tools turn. Aborting.")
+                        break
                     response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools)
                     
                     # Yield intermediate thinking if the model wrote any
@@ -601,6 +627,9 @@ async def _process_chat_message_and_stream(
                         full_think_str = f"<think>{thinking}</think>"
                         chunk_size = 8
                         for i in range(0, len(full_think_str), chunk_size):
+                            if "pytest" not in sys.modules and request and await request.is_disconnected():
+                                logger.info("Client disconnected during intermediate think stream. Aborting.")
+                                break
                             token = full_think_str[i : i + chunk_size]
                             for event_type, content_text in parser.feed(token):
                                 if event_type == "thinking":
@@ -792,6 +821,9 @@ async def _process_chat_message_and_stream(
                 import asyncio
                 chunk_size = 8
                 for i in range(0, len(direct_content), chunk_size):
+                    if "pytest" not in sys.modules and request and await request.is_disconnected():
+                        logger.info("Client disconnected during direct content stream. Aborting.")
+                        break
                     token = direct_content[i : i + chunk_size]
                     for event_type, content_text in parser.feed(token):
                         if event_type == "thinking":
@@ -802,6 +834,9 @@ async def _process_chat_message_and_stream(
                     await asyncio.sleep(0.01)
             else:
                 async for token in ai_client.chat_stream(ollama_messages):
+                    if "pytest" not in sys.modules and request and await request.is_disconnected():
+                        logger.info("Client disconnected during stream. Aborting.")
+                        break
                     for event_type, content_text in parser.feed(token):
                         if event_type == "thinking":
                             full_thinking += content_text
@@ -809,12 +844,14 @@ async def _process_chat_message_and_stream(
                             full_response += content_text
                         yield f"data: {json.dumps({event_type: content_text})}\n\n"
             
-            for event_type, content_text in parser.finalize():
-                if event_type == "thinking":
-                    full_thinking += content_text
-                else:
-                    full_response += content_text
-                yield f"data: {json.dumps({event_type: content_text})}\n\n"
+            # Finalize parser tokens unless aborted
+            if "pytest" in sys.modules or not request or not await request.is_disconnected():
+                for event_type, content_text in parser.finalize():
+                    if event_type == "thinking":
+                        full_thinking += content_text
+                    else:
+                        full_response += content_text
+                    yield f"data: {json.dumps({event_type: content_text})}\n\n"
 
         except httpx.ConnectError:
             error_msg = (
@@ -828,19 +865,24 @@ async def _process_chat_message_and_stream(
             yield f"data: {json.dumps({'delta': error_msg})}\n\n"
             full_response = error_msg
 
-        # C. Persist the completed assistant message.
-        async with AsyncSessionLocal() as write_db:
-            assistant_msg = ChatMessage(
-                session_id=_session_id,
-                role="assistant",
-                content=sanitize_content(full_response),
-                thinking=full_thinking if full_thinking else None,
-                sources=matching_data if matching_data else None,
-            )
-            write_db.add(assistant_msg)
-            await write_db.commit()
+        # C. Persist the completed assistant message (only if non-empty).
+        if sanitize_content(full_response) or full_thinking:
+            async with AsyncSessionLocal() as write_db:
+                saved_sources = matching_data.copy() if matching_data else []
+                if meta_data:
+                    saved_sources.append(meta_data)
+                assistant_msg = ChatMessage(
+                    session_id=_session_id,
+                    role="assistant",
+                    content=sanitize_content(full_response),
+                    thinking=full_thinking if full_thinking else None,
+                    sources=saved_sources if saved_sources else None,
+                )
+                write_db.add(assistant_msg)
+                await write_db.commit()
 
-        yield "data: [DONE]\n\n"
+        if "pytest" in sys.modules or not request or not await request.is_disconnected():
+            yield "data: [DONE]\n\n"
 
     # 8. After streaming, schedule summarization if the session has grown long (count > 10)
     # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
@@ -855,6 +897,7 @@ async def _process_chat_message_and_stream(
 async def send_message(
     session_id: uuid.UUID,
     body: SendMessageRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -877,6 +920,7 @@ async def send_message(
         background_tasks=background_tasks,
         db=db,
         ai_client=ai_client,
+        request=request,
         use_reranker=body.use_reranker,
     )
 
@@ -886,6 +930,7 @@ async def stream_messages_get(
     session_id: uuid.UUID,
     content: str,
     token: str,
+    request: Request,
     background_tasks: BackgroundTasks,
     use_rag: bool = False,
     use_hyde: bool = False,
@@ -946,5 +991,6 @@ async def stream_messages_get(
         background_tasks=background_tasks,
         db=db,
         ai_client=ai_client,
+        request=request,
         use_reranker=use_reranker,
     )

@@ -516,13 +516,17 @@ async def generate_hypothetical_document(query: str) -> str:
         "Passage:"
     )
 
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(
             f"{settings.ollama_base_url}/api/generate",
             json={
                 "model": settings.ollama_model,
                 "prompt": prompt,
                 "stream": False,
+                "think": False,
+                "options": {
+                    "num_predict": 120,
+                }
             },
         )
         response.raise_for_status()
@@ -609,6 +613,7 @@ async def search_relevant_chunks(
     session_id: uuid.UUID | None = None,
     selected_document_ids: list[uuid.UUID] | None = None,
     use_reranker: bool = False,
+    include_meta: bool = False,
 ) -> list[dict]:
     """
     Retrieve the top-`limit` document chunks most semantically similar to `query`.
@@ -640,12 +645,16 @@ async def search_relevant_chunks(
 
     candidates: dict[tuple[str, int], dict] = {}
     semantic_query = query
+    hyde_succeeded = False
+    hyde_document = None
 
     if use_hyde and retrieval_mode in {"semantic", "hybrid"}:
         try:
             hypothetical_document = await generate_hypothetical_document(query)
             if hypothetical_document:
                 semantic_query = hypothetical_document
+                hyde_succeeded = True
+                hyde_document = hypothetical_document
         except Exception as exc:
             logger.warning(
                 "HyDE generation failed; falling back to original query: %s",
@@ -704,56 +713,64 @@ async def search_relevant_chunks(
     }
 
     reranked = []
+    reranker_succeeded = False
     if use_reranker and candidates:
-        from app.ai.services.reranker_service import rerank_candidates
-        import math
+        try:
+            from app.ai.services.reranker_service import rerank_candidates
+            import math
 
-        # Prepare candidates for reranking
-        items_to_rerank = []
-        for key, item in candidates.items():
-            payload = item["payload"]
-            semantic_score = item["semantic_score"]
-            keyword_score = item["keyword_score"]
+            # Prepare candidates for reranking
+            items_to_rerank = []
+            for key, item in candidates.items():
+                payload = item["payload"]
+                semantic_score = item["semantic_score"]
+                keyword_score = item["keyword_score"]
 
-            match_type = retrieval_mode
-            if retrieval_mode == "hybrid":
-                if semantic_score and keyword_score:
-                    match_type = "hybrid"
-                elif semantic_score:
-                    match_type = "semantic"
-                else:
-                    match_type = "keyword"
-            
-            items_to_rerank.append({
-                "key": key,
-                "text": payload.get("text", ""),
-                "payload": payload,
-                "match_type": match_type,
-            })
+                match_type = retrieval_mode
+                if retrieval_mode == "hybrid":
+                    if semantic_score and keyword_score:
+                        match_type = "hybrid"
+                    elif semantic_score:
+                        match_type = "semantic"
+                    else:
+                        match_type = "keyword"
+                
+                items_to_rerank.append({
+                    "key": key,
+                    "text": payload.get("text", ""),
+                    "payload": payload,
+                    "match_type": match_type,
+                })
 
-        # Run model inference (thread-safe, does not block event loop)
-        reranked_items = await rerank_candidates(query, items_to_rerank)
+            # Run model inference (thread-safe, does not block event loop)
+            reranked_items = await rerank_candidates(query, items_to_rerank)
 
-        for item in reranked_items:
-            payload = item["payload"]
-            match_type = item["match_type"]
-            logit_score = item["rerank_score"]
+            for item in reranked_items:
+                payload = item["payload"]
+                match_type = item["match_type"]
+                logit_score = item["rerank_score"]
 
-            # Map raw logit score to [0, 1] using Sigmoid
-            try:
-                sigmoid_score = 1.0 / (1.0 + math.exp(-logit_score))
-            except OverflowError:
-                sigmoid_score = 0.0 if logit_score < 0 else 1.0
+                # Map raw logit score to [0, 1] using Sigmoid
+                try:
+                    sigmoid_score = 1.0 / (1.0 + math.exp(-logit_score))
+                except OverflowError:
+                    sigmoid_score = 0.0 if logit_score < 0 else 1.0
 
-            final_score = _boosted_score(
-                payload=payload,
-                base_score=sigmoid_score,
-                keywords=keywords,
-                session_id=session_id,
-                selected_document_ids=selected_document_ids,
-            )
-            reranked.append((payload, final_score, match_type))
-    else:
+                final_score = _boosted_score(
+                    payload=payload,
+                    base_score=sigmoid_score,
+                    keywords=keywords,
+                    session_id=session_id,
+                    selected_document_ids=selected_document_ids,
+                )
+                reranked.append((payload, final_score, match_type))
+            reranker_succeeded = True
+        except Exception as exc:
+            logger.error(f"Reranking failed: {exc}. Falling back to standard scoring path.")
+            reranker_succeeded = False
+            reranked = []
+
+    if not reranked and candidates:
         # Standard scoring path (RRF / Semantic / Keyword)
         for key, item in candidates.items():
             payload = item["payload"]
@@ -794,10 +811,22 @@ async def search_relevant_chunks(
 
     reranked.sort(key=lambda item: item[1], reverse=True)
 
-    return [
+    results = [
         _format_result(payload, score, match_type)
         for payload, score, match_type in reranked[:limit]
     ]
+    if include_meta:
+        meta_chunk = {
+            "is_meta": True,
+            "use_hyde": use_hyde,
+            "hyde_succeeded": hyde_succeeded,
+            "hyde_document": hyde_document,
+            "retrieval_mode": retrieval_mode,
+            "use_reranker": use_reranker,
+            "reranker_succeeded": reranker_succeeded,
+        }
+        results.append(meta_chunk)
+    return results
 
 
 # ---------------------------------------------------------------------------

@@ -93,6 +93,7 @@ class LocalAIClient(AIClient):
         session_id: uuid.UUID | None = None,
         selected_document_ids: list[uuid.UUID] | None = None,
         use_reranker: bool = False,
+        include_meta: bool = False,
     ) -> list[dict]:
         return await local_search_relevant_chunks(
             user_id=user_id,
@@ -104,6 +105,7 @@ class LocalAIClient(AIClient):
             session_id=session_id,
             selected_document_ids=selected_document_ids,
             use_reranker=use_reranker,
+            include_meta=include_meta,
         )
 
     async def delete_document_vectors(
