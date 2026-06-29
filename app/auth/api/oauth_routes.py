@@ -33,12 +33,6 @@ async def google_login(request: Request):
         redirect_uri
     )
 
-    print("REDIRECT URI =", redirect_uri)
-
-    return await oauth.google.authorize_redirect(
-        request,
-        redirect_uri
-    )
 
 @router.get("/google/callback")
 async def google_callback(
@@ -109,4 +103,55 @@ async def google_token_login(
     return TokenResponse(
         access_token=create_access_token(token_data),
         refresh_token=create_refresh_token(token_data),
-    )
+    )
+
+
+from pydantic import BaseModel, EmailStr
+
+class GoogleLoginMobileRequest(BaseModel):
+    email: EmailStr
+    name: str
+    google_id: str
+
+@router.post("/google-login")
+async def google_login_mobile(
+    body: GoogleLoginMobileRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.auth.repositories.user_repository import UserRepository
+    from app.auth.services.token_service import TokenService
+    from fastapi import HTTPException, status
+    
+    # Only allow @tkmce.ac.in domains
+    if not body.email.endswith("@tkmce.ac.in"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only TKM institutional accounts allowed"
+        )
+        
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_email(body.email)
+    
+    if not user:
+        user = await user_repo.create(
+            email=body.email,
+            full_name=body.name,
+            hashed_password=hash_password("oauth-user"),
+            phone=None,
+        )
+        # Google Sign-In users are verified/active by default
+        user.is_active = True
+        user.status = "active"
+        await user_repo.save(user)
+        
+    tokens = await TokenService.issue_pair(user, db)
+    
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "user": {
+            "id": str(user.id),
+            "name": user.full_name,
+            "email": user.email,
+        }
+    }

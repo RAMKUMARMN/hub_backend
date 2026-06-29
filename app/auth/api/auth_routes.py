@@ -294,3 +294,17 @@ async def upload_avatar(
     await db.commit()
     await db.refresh(current_user)
     return current_user
+
+
+@router.delete("/avatar", response_model=UserResponse)
+async def remove_avatar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the current profile picture."""
+    if current_user.avatar_url:
+        await delete_file(current_user.avatar_url)
+        current_user.avatar_url = None
+        await db.commit()
+        await db.refresh(current_user)
+    return current_user

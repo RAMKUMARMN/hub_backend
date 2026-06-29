@@ -344,6 +344,7 @@ async def _process_chat_message_and_stream(
 
     # 3. Build chat history: last 10 messages (oldest first) that are not summarized.
     # We prune history if it exceeds 32,000 characters (~8,000 tokens) to prevent prompt bloat.
+    # We prune history if it exceeds 32,000 characters (~8,000 tokens) to prevent prompt bloat.
     history_result = await db.execute(
         select(ChatMessage)
         .where(
@@ -355,7 +356,13 @@ async def _process_chat_message_and_stream(
     )
     
     raw_history = history_result.scalars().all()
+    
+    raw_history = history_result.scalars().all()
     chat_history = []
+    char_count = 0
+    max_history_chars = 32000  # ~8,000 tokens limit for active prompt injection
+    
+    for m in raw_history:
     char_count = 0
     max_history_chars = 32000  # ~8,000 tokens limit for active prompt injection
     
@@ -367,6 +374,9 @@ async def _process_chat_message_and_stream(
         if char_count + msg_len > max_history_chars and len(chat_history) > 0:
             break
         chat_history.append({"role": m.role, "content": m.content or ""})
+        char_count += msg_len
+        
+    chat_history.reverse()  # Order oldest first
         char_count += msg_len
         
     chat_history.reverse()  # Order oldest first
@@ -614,6 +624,8 @@ async def _process_chat_message_and_stream(
                 executed_tool_calls = set()
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
                 
+                parser = ThinkTagParser(thinking_mode=thinking_mode)
+                
                 for turn in range(max_turns):
                     if "pytest" not in sys.modules and request and await request.is_disconnected():
                         logger.info("Client disconnected during tools turn. Aborting.")
@@ -676,6 +688,9 @@ async def _process_chat_message_and_stream(
                             if func_name == "reinspect_document_page":
                                 doc_id_str = args.get("document_id")
                                 page_num = args.get("page_number")
+                                specific_question = args.get("specific_question") or ""
+                                # Yield status update to frontend
+                                yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
                                 specific_question = args.get("specific_question") or ""
                                 # Yield status update to frontend
                                 yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
@@ -752,6 +767,7 @@ async def _process_chat_message_and_stream(
                                                                 "images": [b64_str],
                                                                 "stream": False,
                                                                 "think": False,
+                                                                "think": False,
                                                                 "options": {
                                                                     "num_ctx": 4096,
                                                                 },
@@ -785,6 +801,8 @@ async def _process_chat_message_and_stream(
                                 if query_arg:
                                     # Yield status update to frontend
                                     yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
+                                    # Yield status update to frontend
+                                    yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
                                     from app.ai.services.search_service import unified_web_search
                                     try:
                                         tool_result = await unified_web_search(query_arg)
@@ -807,6 +825,8 @@ async def _process_chat_message_and_stream(
                     else:
                         # No tool calls, the model has finished reasoning.
                         # The thinking was already streamed above, so we only need to stream content.
+                        # No tool calls, the model has finished reasoning.
+                        # The thinking was already streamed above, so we only need to stream content.
                         direct_content = response_msg.get("content", "")
                         break
             except Exception as exc:
@@ -815,6 +835,8 @@ async def _process_chat_message_and_stream(
 
         # B. Stream tokens from the AI module.
         try:
+            if 'parser' not in locals():
+                parser = ThinkTagParser(thinking_mode=thinking_mode)
             if 'parser' not in locals():
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
             if direct_content is not None:
@@ -884,6 +906,10 @@ async def _process_chat_message_and_stream(
         if "pytest" in sys.modules or not request or not await request.is_disconnected():
             yield "data: [DONE]\n\n"
 
+    # 8. After streaming, schedule summarization if the session has grown long (count > 10)
+    # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
+    history_chars = sum(len(m.get("content", "")) for m in chat_history)
+    if total_msg_count > 10 or history_chars > 40000:
     # 8. After streaming, schedule summarization if the session has grown long (count > 10)
     # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
     history_chars = sum(len(m.get("content", "")) for m in chat_history)

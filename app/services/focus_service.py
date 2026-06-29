@@ -12,18 +12,17 @@ class FocusService:
         self.db = db
 
     async def start_session(self, user_id: uuid.UUID, session_type: str) -> FocusSession:
-        # Check if user already has an active session (started or paused)
+        # Cancel any active/paused sessions to prevent deadlock if app state was lost
         active_result = await self.db.execute(
             select(FocusSession).where(
                 FocusSession.user_id == user_id,
                 FocusSession.status.in_(["started", "paused"])
             )
         )
-        if active_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User already has an active focus session"
-            )
+        active_sessions = active_result.scalars().all()
+        for active in active_sessions:
+            active.status = "cancelled"
+            active.end_time = datetime.now(timezone.utc)
 
         session = FocusSession(user_id=user_id, type=session_type, status="started")
         self.db.add(session)
@@ -76,7 +75,7 @@ class FocusService:
             paused_seconds += int((end_time - session.paused_at).total_seconds())
 
         total_duration = (end_time - session.start_time).total_seconds() - paused_seconds
-        duration_minutes = max(0, int(total_duration // 60))
+        duration_minutes = max(0, int(round(total_duration / 60.0)))
 
         session.status = finish_status
         session.end_time = end_time
