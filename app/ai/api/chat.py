@@ -344,7 +344,6 @@ async def _process_chat_message_and_stream(
 
     # 3. Build chat history: last 10 messages (oldest first) that are not summarized.
     # We prune history if it exceeds 32,000 characters (~8,000 tokens) to prevent prompt bloat.
-    # We prune history if it exceeds 32,000 characters (~8,000 tokens) to prevent prompt bloat.
     history_result = await db.execute(
         select(ChatMessage)
         .where(
@@ -356,13 +355,7 @@ async def _process_chat_message_and_stream(
     )
     
     raw_history = history_result.scalars().all()
-    
-    raw_history = history_result.scalars().all()
     chat_history = []
-    char_count = 0
-    max_history_chars = 32000  # ~8,000 tokens limit for active prompt injection
-    
-    for m in raw_history:
     char_count = 0
     max_history_chars = 32000  # ~8,000 tokens limit for active prompt injection
     
@@ -374,9 +367,6 @@ async def _process_chat_message_and_stream(
         if char_count + msg_len > max_history_chars and len(chat_history) > 0:
             break
         chat_history.append({"role": m.role, "content": m.content or ""})
-        char_count += msg_len
-        
-    chat_history.reverse()  # Order oldest first
         char_count += msg_len
         
     chat_history.reverse()  # Order oldest first
@@ -906,10 +896,6 @@ async def _process_chat_message_and_stream(
         if "pytest" in sys.modules or not request or not await request.is_disconnected():
             yield "data: [DONE]\n\n"
 
-    # 8. After streaming, schedule summarization if the session has grown long (count > 10)
-    # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
-    history_chars = sum(len(m.get("content", "")) for m in chat_history)
-    if total_msg_count > 10 or history_chars > 40000:
     # 8. After streaming, schedule summarization if the session has grown long (count > 10)
     # OR if the total unsummarized messages characters exceed 40,000 characters (~10,000 tokens).
     history_chars = sum(len(m.get("content", "")) for m in chat_history)
