@@ -150,6 +150,15 @@ async def send_message(
     async def event_generator():
         full_response = ""
 
+        user_msg = ChatMessage(
+            session_id=session_id,
+            role="user",
+            content=body.content,
+        )
+
+        db.add(user_msg)
+        await db.commit()
+
         task = detect_task(body.content)
 
         if task != "chat":
@@ -162,10 +171,8 @@ async def send_message(
             yield "data: [DONE]\n\n"
             return
 
-        # Save user message
-        user_msg = ChatMessage(session_id=session_id, role="user", content=body.content)
-        db.add(user_msg)
-        await db.commit()
+        # Continue with AI chat
+
 
         # Build message history for context
         history_result = await db.execute(
@@ -199,30 +206,30 @@ async def send_message(
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-    class RenameSessionRequest(BaseModel):
-        title: str
+class RenameSessionRequest(BaseModel):
+    title: str
 
-    @router.put("/sessions/{session_id}")
-    async def rename_session(
-        session_id: uuid.UUID,
-        body: RenameSessionRequest,
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db),
-    ):
-        result = await db.execute(
-            select(ChatSession).where(
-                ChatSession.id == session_id,
-                ChatSession.user_id == current_user.id,
-            )
+@router.put("/sessions/{session_id}")
+async def rename_session(
+    session_id: uuid.UUID,
+    body: RenameSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
         )
+    )
 
-        session = result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
 
-        if not session:
-            raise HTTPException(404, "Session not found")
+    if not session:
+        raise HTTPException(404, "Session not found")
 
-        session.title = body.title
+    session.title = body.title
 
-        await db.commit()
+    await db.commit()
 
-        return session
+    return session
