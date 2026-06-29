@@ -1,6 +1,7 @@
 ---
 name: backend-code-reviewer
 description: "Code reviewer for hub_backend: reviews FastAPI endpoints, database models, service logic, and tests for correctness, security, performance, and best practices. Does NOT implement code."
+tools: Read, Glob, Grep
 ---
 
 # Backend Code Reviewer Agent

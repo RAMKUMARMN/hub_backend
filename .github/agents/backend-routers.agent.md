@@ -1,6 +1,7 @@
 ---
 name: backend-routers
 description: "Single-task agent for creating and updating FastAPI REST endpoints in app/routers/. Includes Pydantic schemas, dependencies, route registration, and tests. Does NOT handle models, migrations, or service integrations."
+tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
 # Backend Routers Agent

@@ -1,6 +1,7 @@
 ---
 name: backend-database
 description: "Single-task agent for SQLAlchemy models, Pydantic schemas, Alembic migrations, and database configuration. Does NOT handle API endpoints or service integrations."
+tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
 # Backend Database Agent

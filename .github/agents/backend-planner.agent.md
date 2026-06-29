@@ -1,6 +1,7 @@
 ---
 name: backend-planner
 description: "Implementation planner for hub_backend: generates structured plans for new endpoints, database changes, service integrations, or refactoring. Does NOT implement code."
+tools: Read, Glob, Grep, WebSearch
 ---
 
 # Backend Planner Agent

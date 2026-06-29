@@ -1,6 +1,7 @@
 ---
 name: backend-integrations
 description: "Single-task agent for service layer business logic and external integrations: RabbitMQ, Redis, Ollama, ChromaDB, MinIO/S3. Does NOT handle API endpoints or database models."
+tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
 # Backend Integrations Agent
