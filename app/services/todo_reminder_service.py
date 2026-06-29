@@ -17,16 +17,22 @@ async def create_due_soon_notifications(
     manager,
 ) -> None:
     """
-    Runs every 5 minutes.
+    Runs every minute.
 
-    Creates:
+    Sends:
     1. In-app notification
     2. WebSocket notification
-    3. Email notification queued through RabbitMQ
+    3. Email notification
     """
 
     now = datetime.now(timezone.utc)
     soon = now + timedelta(hours=24)
+
+    print("================================")
+    print("Checking due soon todos...")
+    print("Current UTC:", now)
+    print("Checking until:", soon)
+    print("================================")
 
     result = await db.execute(
         select(Todo, User)
@@ -41,20 +47,29 @@ async def create_due_soon_notifications(
 
     rows = result.all()
 
+    print(f"Found {len(rows)} todos")
+
     for todo, user in rows:
 
-        existing = await db.execute(
-            select(UserNotification.id).where(
-                UserNotification.todo_id == todo.id,
-                UserNotification.notification_type == TODO_DUE_SOON,
-            )
-        )
+        print(f"Processing todo: {todo.title}")
 
-        if existing.scalar_one_or_none():
+        # Skip if reminder already sent
+        if todo.reminder_sent:
+            print("Reminder already sent")
+            continue
+
+        # Skip if no reminder time
+        if not todo.reminder_at:
+            print("No reminder_at configured")
+            continue
+
+        # Skip until reminder time arrives
+        if todo.reminder_at > now:
+            print("Reminder time not reached yet")
             continue
 
         title = "Deadline Approaching"
-        message = f'Your task "{todo.title}" is due within 24 hours.'
+        message = f'Your task "{todo.title}" is due soon.'
 
         db.add(
             UserNotification(
@@ -70,6 +85,8 @@ async def create_due_soon_notifications(
         # WebSocket notification
         # -------------------------
         try:
+            print("Sending websocket reminder...")
+
             await manager.send_notification(
                 str(todo.user_id),
                 {
@@ -85,20 +102,24 @@ async def create_due_soon_notifications(
                     ),
                 },
             )
+
         except Exception as e:
             print(f"WebSocket failed: {e}")
 
         # -------------------------
-        # Queue Email
+        # Queue email
         # -------------------------
         try:
+            print("Queueing email reminder...")
+
             await publish_notification(
                 NotifyPayload(
                     channel="email",
                     recipient=user.email,
                     subject=f"Reminder: {todo.title} is due soon",
                     body=(
-                        f'Your task "{todo.title}" is due within 24 hours.\n\n'
+                        f"Reminder\n\n"
+                        f"Your task '{todo.title}' is due soon.\n\n"
                         f"Priority: {todo.priority}\n"
                         f"Due Date: {todo.due_date}"
                     ),
@@ -108,8 +129,12 @@ async def create_due_soon_notifications(
                     },
                 )
             )
+            print("✅ Published email reminder to RabbitMQ")
 
         except Exception as e:
             print(f"Could not queue email reminder: {e}")
+
+        # Mark reminder as sent
+        todo.reminder_sent = True
 
     await db.commit()
