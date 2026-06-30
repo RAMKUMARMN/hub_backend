@@ -1,11 +1,31 @@
 import logging
+import re
 import httpx
 from ddgs import DDGS
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-async def search_tavily(query: str, max_results: int = 3) -> str:
+
+def _clean_snippet(text: str) -> str:
+    """
+    Strip noisy HTML/markdown artifacts from search snippets so small LLMs
+    can focus on the actual content instead of getting confused by URLs,
+    image tags, and navigation boilerplate.
+    """
+    # Remove markdown image references: ![...](...)
+    text = re.sub(r"!\[.*?\]\(.*?\)", "", text)
+    # Remove markdown links but keep the link text: [text](url) -> text
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    # Remove bare URLs
+    text = re.sub(r"https?://\S+", "", text)
+    # Remove HTML tags
+    text = re.sub(r"<[^>]+>", "", text)
+    # Collapse multiple whitespace/newlines
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+async def search_tavily(query: str, max_results: int = 5) -> str:
     """Queries Tavily API for search results."""
     if not settings.tavily_api_key:
         raise ValueError("Tavily API key is not configured.")
@@ -25,14 +45,14 @@ async def search_tavily(query: str, max_results: int = 3) -> str:
         
         formatted = []
         for res in results:
-            snippet = res.get('content', '')
-            if len(snippet) > 1500:
-                snippet = snippet[:1500] + "..."
+            snippet = _clean_snippet(res.get('content', ''))
+            if len(snippet) > 2000:
+                snippet = snippet[:2000] + "..."
             formatted.append(f"Source: {res['url']}\nTitle: {res['title']}\nSnippet: {snippet}")
         return "\n\n".join(formatted)
 
 
-def search_duckduckgo(query: str, max_results: int = 3) -> str:
+def search_duckduckgo(query: str, max_results: int = 5) -> str:
     """Queries DuckDuckGo as a zero-cost backup search engine."""
     logger.info("Using DuckDuckGo fallback search for query: '%s'", query)
     try:
@@ -40,9 +60,9 @@ def search_duckduckgo(query: str, max_results: int = 3) -> str:
             results = ddgs.text(query, max_results=max_results)
             formatted = []
             for r in results:
-                snippet = r.get('body', '')
-                if len(snippet) > 1500:
-                    snippet = snippet[:1500] + "..."
+                snippet = _clean_snippet(r.get('body', ''))
+                if len(snippet) > 2000:
+                    snippet = snippet[:2000] + "..."
                 formatted.append(f"Source: {r['href']}\nTitle: {r['title']}\nSnippet: {snippet}")
             return "\n\n".join(formatted)
     except Exception as e:
@@ -50,7 +70,7 @@ def search_duckduckgo(query: str, max_results: int = 3) -> str:
         raise e
 
 
-async def unified_web_search(query: str, max_results: int = 3) -> str:
+async def unified_web_search(query: str, max_results: int = 5) -> str:
     """
     Tries to search using Tavily first. If the rate limit hits, API fails, 
     or quota runs out, it seamlessly falls back to DuckDuckGo.

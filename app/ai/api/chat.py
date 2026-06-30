@@ -659,15 +659,15 @@ async def _process_chat_message_and_stream(
             try:
                 # Execute up to 3 sequential tool call turns
                 max_turns = 3
+                turns_used = 0
                 executed_tool_calls = set()
-                parser = ThinkTagParser(thinking_mode=thinking_mode)
-                
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
                 
                 for turn in range(max_turns):
                     if "pytest" not in sys.modules and request and await request.is_disconnected():
                         logger.info("Client disconnected during tools turn. Aborting.")
                         break
+                    turns_used += 1
                     response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools, think=thinking_mode)
                     
                     # Yield intermediate thinking if the model wrote any
@@ -726,10 +726,6 @@ async def _process_chat_message_and_stream(
                             if func_name == "reinspect_document_page":
                                 doc_id_str = args.get("document_id")
                                 page_num = args.get("page_number")
-                                specific_question = args.get("specific_question") or ""
-                                # Yield status update to frontend
-                                yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
-                                specific_question = args.get("specific_question") or ""
                                 # Yield status update to frontend
                                 yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
                                 
@@ -839,11 +835,9 @@ async def _process_chat_message_and_stream(
                                 if query_arg:
                                     # Yield status update to frontend
                                     yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
-                                    # Yield status update to frontend
-                                    yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
                                     from app.ai.services.search_service import unified_web_search
                                     try:
-                                        tool_result = await unified_web_search(query_arg)
+                                        tool_result = await unified_web_search(query_arg, max_results=5)
                                     except Exception as e:
                                         logger.error("Error in unified_web_search: %s", e, exc_info=True)
                                         tool_result = f"Error during web search: {str(e)}"
@@ -863,18 +857,17 @@ async def _process_chat_message_and_stream(
                     else:
                         # No tool calls, the model has finished reasoning.
                         # The thinking was already streamed above, so we only need to stream content.
-                        # No tool calls, the model has finished reasoning.
-                        # The thinking was already streamed above, so we only need to stream content.
                         direct_content = response_msg.get("content", "")
                         break
+
+                logger.info("🛠️ Tool calling loop finished. Total turns used: %d", turns_used)
+                print(f"\n[AI Search] Tool calling loop finished. Total turns used: {turns_used}\n", flush=True)
             except Exception as exc:
                 logger.error("Failed to execute tool-calling loop: %s", exc, exc_info=True)
                 direct_content = None
 
         # B. Stream tokens from the AI module.
         try:
-            if 'parser' not in locals():
-                parser = ThinkTagParser(thinking_mode=thinking_mode)
             if 'parser' not in locals():
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
             if direct_content is not None:
