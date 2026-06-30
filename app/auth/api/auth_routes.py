@@ -108,8 +108,13 @@ async def verify_otp(body: OTPVerifyRequest, db: AsyncSession = Depends(get_db))
             detail="Invalid or expired verification code"
         )
 
+    from app.auth.utils.validators import is_valid_institutional_email
+
     user.is_active = True
-    user.status = "active"
+    if is_valid_institutional_email(user.email):
+        user.status = "active"
+    else:
+        user.status = "pending"
     await user_repo.save(user)
     return {"detail": "Email verified successfully"}
 

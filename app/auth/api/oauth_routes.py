@@ -84,11 +84,15 @@ async def google_token_login(
     if not user:
         # First-time Google user — register them automatically
         random_pass = secrets.token_urlsafe(32)
+        is_active = True
+        status_val = "active" if email.endswith("@tkmce.ac.in") else "pending"
         user = User(
             email=email,
             full_name=full_name,
             hashed_password=hash_password(random_pass),
             avatar_url=picture,
+            is_active=is_active,
+            status=status_val,
         )
         db.add(user)
         await db.commit()
@@ -98,6 +102,17 @@ async def google_token_login(
         user.avatar_url = picture
         await db.commit()
         await db.refresh(user)
+
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending admin approval",
+        )
+    elif user.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account suspended",
+        )
 
     token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
     return TokenResponse(
@@ -122,27 +137,31 @@ async def google_login_mobile(
     from app.auth.services.token_service import TokenService
     from fastapi import HTTPException, status
     
-    # Only allow @tkmce.ac.in domains
-    if not body.email.endswith("@tkmce.ac.in"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only TKM institutional accounts allowed"
-        )
-        
     user_repo = UserRepository(db)
     user = await user_repo.get_by_email(body.email)
     
     if not user:
+        is_active = True
+        status_val = "active" if body.email.endswith("@tkmce.ac.in") else "pending"
         user = await user_repo.create(
             email=body.email,
             full_name=body.name,
             hashed_password=hash_password("oauth-user"),
             phone=None,
+            is_active=is_active,
+            status=status_val,
         )
-        # Google Sign-In users are verified/active by default
-        user.is_active = True
-        user.status = "active"
-        await user_repo.save(user)
+        
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending admin approval",
+        )
+    elif user.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account suspended",
+        )
         
     tokens = await TokenService.issue_pair(user, db)
     

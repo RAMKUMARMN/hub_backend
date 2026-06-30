@@ -18,22 +18,29 @@ class OAuthService:
         full_name: str,
     ):
 
-        # Only TKM accounts
-        if not email.endswith("@tkmce.ac.in"):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only TKM institutional accounts allowed"
-            )
-
         user = await self.user_repo.get_by_email(email)
 
         if not user:
-
+            is_active = True
+            status_val = "active" if email.endswith("@tkmce.ac.in") else "pending"
             user = await self.user_repo.create(
                 email=email,
                 full_name=full_name,
                 hashed_password=hash_password("oauth-user"),
                 phone=None,
+                is_active=is_active,
+                status=status_val,
+            )
+
+        if user.status == "pending":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account pending admin approval",
+            )
+        elif user.status == "suspended":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Account suspended",
             )
 
         return await TokenService.issue_pair(
