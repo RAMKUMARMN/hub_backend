@@ -15,6 +15,8 @@ from app.schemas.todo import (
     TodoResponse,
     UpdateTodoRequest,
 )
+from app.models.device import UserDevice
+from app.queue.producer import publish_job
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -47,8 +49,31 @@ async def create_todo(
     db.add(todo)
     await db.commit()
     await db.refresh(todo)
-    return todo
 
+    # Look up the user's most recently registered device, same pattern as OTP
+    device_result = await db.execute(
+        select(UserDevice)
+        .where(UserDevice.user_id == current_user.id)
+        .order_by(UserDevice.id.desc())
+    )
+    device = device_result.scalars().first()
+
+    if device:
+        await publish_job(
+            queue_name="push.process",
+            payload={
+                "job_id": f"todo-added-{todo.id}",
+                "channel": "push",
+                "recipient": device.device_token,
+                "title": "To-do added",
+                "body": f"'{todo.title}' was added to your list",
+                "data": {"type": "todo_added", "todo_id": str(todo.id)},
+                "attempt": 1,
+                "max_attempts": 3,
+            },
+        )
+
+    return todo
 
 @router.put("/{todo_id}", response_model=TodoResponse)
 async def update_todo(

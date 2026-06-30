@@ -1,15 +1,15 @@
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import engine
+from app.database import Base, engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.routers import (
     admin_router,
     auth_router,
     chat_router,
+    devices_router,
     documents_router,
     poll_router,
     todos_router,
@@ -18,7 +18,9 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: can run DB migrations check here if needed
+    # Startup: run DB tables auto-creation
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
     # Shutdown: close DB connections
     await engine.dispose()
@@ -52,6 +54,7 @@ app.include_router(documents_router, prefix=PREFIX)
 app.include_router(todos_router, prefix=PREFIX)
 app.include_router(poll_router, prefix=PREFIX)
 app.include_router(admin_router, prefix=PREFIX)
+app.include_router(devices_router, prefix=PREFIX)
 
 
 @app.get("/api/v1/health", tags=["health"])

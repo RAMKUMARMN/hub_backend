@@ -1,0 +1,8 @@
+{
+  "include": [
+    "hub_backend"
+  ],
+  "extraPaths": [
+    "./hub_backend"
+  ]
+}
