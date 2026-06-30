@@ -510,6 +510,43 @@ async def _process_chat_message_and_stream(
                 system_instruction += (
                     f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
                 )
+    else:
+        # Non-RAG mode: if specific document_ids are provided, read and append their full text directly as context
+        if document_ids:
+            try:
+                # Retrieve documents that belong to current user
+                allowed_docs_result = await db.execute(
+                    select(Document).where(
+                        Document.id.in_(document_ids),
+                        Document.user_id == current_user.id,
+                    )
+                )
+                allowed_docs = allowed_docs_result.scalars().all()
+                
+                full_texts = []
+                for doc in allowed_docs:
+                    doc_text = await ai_client.extract_text(doc.storage_path, doc.file_type)
+                    if doc_text.strip():
+                        # Truncate each document's text to a reasonable limit (e.g. 20,000 characters) to prevent token window overflow
+                        truncated_text = doc_text.strip()
+                        if len(truncated_text) > 20000:
+                            truncated_text = truncated_text[:20000] + "\n... [Truncated due to context window constraints] ..."
+                        full_texts.append(f"--- DOCUMENT: {doc.filename} ---\n{truncated_text}")
+                
+                if full_texts:
+                    context = "\n\n".join(full_texts)
+                    system_instruction = (
+                        "You are an assistant answering questions using the following document context.\n"
+                        "Answer based on the context. If the context does not contain the answer, "
+                        "say so clearly but still try to help based on general knowledge.\n\n"
+                        f"--- DOCUMENT CONTEXT ---\n{context}\n------------------------"
+                    )
+                    if session.summary:
+                        system_instruction += (
+                            f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
+                        )
+            except Exception as exc:
+                logger.error("Failed to extract full text context in non-RAG mode: %s", exc)
 
     # 6.5. Inject thinking mode instruction.
     if thinking_mode:

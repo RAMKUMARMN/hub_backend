@@ -127,7 +127,7 @@ async def test_chat_triggers_web_search_tool(authenticated_client):
         def __init__(self):
             self.calls = 0
             
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             self.calls += 1
             if self.calls == 1:
                 return {

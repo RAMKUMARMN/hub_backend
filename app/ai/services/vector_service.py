@@ -84,9 +84,8 @@ async def _ensure_payload_indexes() -> None:
             )
 
 
-# ---------------------------------------------------------------------------
-# Startup helper
-# ---------------------------------------------------------------------------
+_qdrant_initialized = False
+
 
 async def init_qdrant_collection() -> None:
     """
@@ -97,6 +96,10 @@ async def init_qdrant_collection() -> None:
       exact keyword queries (course codes, function names, etc.) work alongside
       vector cosine search.
     """
+    global _qdrant_initialized
+    if _qdrant_initialized:
+        return
+    _qdrant_initialized = True
     try:
         exists = await qdrant_client.collection_exists(
             collection_name=settings.qdrant_collection

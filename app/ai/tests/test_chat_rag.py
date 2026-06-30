@@ -758,7 +758,7 @@ async def test_chat_rag_passes_hybrid_retrieval_mode(authenticated_client):
                 ]
             )
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "Hybrid answer"
 
     fake_ai = FakeAIClient()
@@ -841,7 +841,7 @@ async def test_chat_get_stream_passes_hyde_toggle(authenticated_client):
                 ]
             )
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "GET HyDE answer"
 
     fake_ai = FakeAIClient()
@@ -999,10 +999,10 @@ async def test_automatic_session_image_recall(authenticated_client):
             # Standard search returns empty/unrelated
             return []
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "Response"
 
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             return {"role": "assistant", "content": "Response"}
 
     fake_ai = FakeAIClient()
@@ -1094,7 +1094,7 @@ async def test_agentic_reinspection_fallback(authenticated_client):
             ])
             self.calls = 0
 
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             self.calls += 1
             if self.calls == 1:
                 return {
