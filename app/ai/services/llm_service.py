@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 async def chat_stream(
     messages: list[dict],
+    think: bool = True,
 ) -> AsyncIterator[str]:
     """
     Stream tokens from the local Ollama /api/chat endpoint.
@@ -39,8 +40,9 @@ async def chat_stream(
                 "model": settings.ollama_model,
                 "messages": messages,
                 "stream": True,
+                "think": think,
                 "options": {
-                    "num_ctx": 16384,
+                    "num_ctx": 8192,
                     "num_predict": -1,
                 },
                 "keep_alive": "5m",
@@ -110,6 +112,7 @@ async def get_embedding(text: str) -> list[float]:
 async def chat_with_tools(
     messages: list[dict],
     tools: list[dict] | None = None,
+    think: bool = True,
 ) -> dict:
     """
     One-shot chat completion with Ollama supporting tool/function calling.
@@ -119,8 +122,9 @@ async def chat_with_tools(
         "model": settings.ollama_model,
         "messages": messages,
         "stream": False,
+        "think": think,
         "options": {
-            "num_ctx": 16384,
+            "num_ctx": 8192,
             "num_predict": -1,
         },
         "keep_alive": "5m",

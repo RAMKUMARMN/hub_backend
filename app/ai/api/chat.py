@@ -620,7 +620,7 @@ async def _process_chat_message_and_stream(
                     if "pytest" not in sys.modules and request and await request.is_disconnected():
                         logger.info("Client disconnected during tools turn. Aborting.")
                         break
-                    response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools)
+                    response_msg = await ai_client.chat_with_tools(ollama_messages, tools=tools, think=thinking_mode)
                     
                     # Yield intermediate thinking if the model wrote any
                     thinking = response_msg.get("thinking", "")
@@ -845,7 +845,7 @@ async def _process_chat_message_and_stream(
                         yield f"data: {json.dumps({event_type: content_text})}\n\n"
                     await asyncio.sleep(0.01)
             else:
-                async for token in ai_client.chat_stream(ollama_messages):
+                async for token in ai_client.chat_stream(ollama_messages, think=thinking_mode):
                     if "pytest" not in sys.modules and request and await request.is_disconnected():
                         logger.info("Client disconnected during stream. Aborting.")
                         break

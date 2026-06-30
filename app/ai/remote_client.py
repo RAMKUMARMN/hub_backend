@@ -20,9 +20,10 @@ class RemoteAIClient(AIClient):
     async def chat_stream(
         self,
         messages: list[dict],
+        think: bool = True,
     ) -> AsyncIterator[str]:
         async with self._get_client(timeout=120.0) as client:
-            async with client.stream("POST", "/api/v1/chat/stream", json={"messages": messages}) as response:
+            async with client.stream("POST", "/api/v1/chat/stream", json={"messages": messages, "think": think}) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
@@ -33,7 +34,7 @@ class RemoteAIClient(AIClient):
                             payload = json.loads(data_str)
                             token = payload.get("delta") or payload.get("thinking") or ""
                             if token:
-                                yield token
+                                  yield token
                         except json.JSONDecodeError:
                             pass
 
@@ -81,6 +82,7 @@ class RemoteAIClient(AIClient):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        think: bool = True,
     ) -> dict:
         """One-shot chat completion with support for tool/function calling."""
         async with self._get_client(timeout=120.0) as client:
@@ -89,6 +91,7 @@ class RemoteAIClient(AIClient):
                 json={
                     "messages": messages,
                     "tools": tools,
+                    "think": think,
                 },
             )
             response.raise_for_status()

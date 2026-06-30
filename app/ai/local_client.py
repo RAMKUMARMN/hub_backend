@@ -27,8 +27,9 @@ class LocalAIClient(AIClient):
     async def chat_stream(
         self,
         messages: list[dict],
+        think: bool = True,
     ) -> AsyncIterator[str]:
-        async for token in local_chat_stream(messages):
+        async for token in local_chat_stream(messages, think=think):
             yield token
 
     async def summarize_text(
@@ -41,8 +42,9 @@ class LocalAIClient(AIClient):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        think: bool = True,
     ) -> dict:
-        return await local_chat_with_tools(messages, tools)
+        return await local_chat_with_tools(messages, tools, think=think)
 
     async def get_embedding(
         self,
