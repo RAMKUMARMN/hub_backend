@@ -42,7 +42,7 @@ async def chat_stream(
                 "stream": True,
                 "think": think,
                 "options": {
-                    "num_ctx": 8192,
+                    "num_ctx": 16384,
                     "num_predict": -1,
                 },
                 "keep_alive": "5m",
@@ -124,7 +124,7 @@ async def chat_with_tools(
         "stream": False,
         "think": think,
         "options": {
-            "num_ctx": 8192,
+            "num_ctx": 16384,
             "num_predict": -1,
         },
         "keep_alive": "5m",

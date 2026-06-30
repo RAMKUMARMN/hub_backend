@@ -46,6 +46,7 @@ async def upload_document(
     file: UploadFile,
     background_tasks: BackgroundTasks,
     session_id: uuid.UUID | None = None,
+    use_rag: bool = True,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     ai_client: AIClient = Depends(get_ai_client),
@@ -113,9 +114,9 @@ async def upload_document(
     await db.commit()
     await db.refresh(doc)
 
-    # Fire-and-forget: extract text, embed, and store in Qdrant.
+    # Fire-and-forget: extract text, embed, and store in Qdrant (if use_rag is True).
     background_tasks.add_task(
-        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client
+        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client, use_rag
     )
 
     return doc
@@ -128,6 +129,7 @@ async def _process_document(
     filename: str,
     session_id: uuid.UUID | None = None,
     ai_client: AIClient | None = None,
+    use_rag: bool = True,
 ) -> None:
     """
     Background task: extract plain text from the uploaded file and ingest it
@@ -153,7 +155,12 @@ async def _process_document(
             print(f"[Ingestion] Extracting text content from '{filename}' ({doc.file_type})...")
             text = await ai_client.extract_text(storage_path, doc.file_type)
 
-            if not text.strip():
+            if not use_rag:
+                print(f"[Ingestion] Direct LLM mode: skipping Qdrant indexing for '{filename}'")
+                logger.info(
+                    "Document %s: Skipping vector indexing (Direct LLM mode).", document_id
+                )
+            elif not text.strip():
                 print(f"[Ingestion] Warning: Extracted text is empty for '{filename}'")
                 logger.warning(
                     "Document %s produced empty text — skipping vector storage.", document_id
@@ -161,20 +168,28 @@ async def _process_document(
             else:
                 # Chunk, embed, and store in Qdrant (multi-tenant, keyed by user_id).
                 print(f"[Ingestion] Chunking, embedding, and storing text for '{filename}'...")
-                chunks_stored = await ai_client.store_document_vectors(
-                    user_id=user_id,
-                    document_id=document_id,
-                    text=text,
-                    filename=filename,
-                    session_id=session_id,
-                )
-                print(f"[Ingestion] Successfully stored {chunks_stored} text chunks in Qdrant.")
-                logger.info(
-                    "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
-                )
+                try:
+                    chunks_stored = await ai_client.store_document_vectors(
+                        user_id=user_id,
+                        document_id=document_id,
+                        text=text,
+                        filename=filename,
+                        session_id=session_id,
+                    )
+                    print(f"[Ingestion] Successfully stored {chunks_stored} text chunks in Qdrant.")
+                    logger.info(
+                        "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
+                    )
+                except Exception as qdrant_exc:
+                    print(f"[Ingestion] Qdrant storage failed or skipped: {qdrant_exc}")
+                    logger.warning(
+                        "Qdrant storage failed for document %s: %s. Continuing processing.",
+                        document_id,
+                        qdrant_exc,
+                    )
 
             # Vision RAG processing for images/PDFs
-            if settings.enable_vision_rag:
+            if use_rag and settings.enable_vision_rag:
                 try:
                     import base64
                     import httpx

@@ -548,6 +548,12 @@ async def _process_chat_message_and_stream(
             except Exception as exc:
                 logger.error("Failed to extract full text context in non-RAG mode: %s", exc)
 
+    # 6.4. Pre-compute has_visual_chunks so it can be used both here and in event_generator.
+    has_visual_chunks = any(
+        "[Image Description" in item.get("text", "")
+        for item in matching_data
+    )
+
     # 6.5. Inject thinking mode instruction.
     if thinking_mode:
         system_instruction += (
@@ -555,8 +561,19 @@ async def _process_chat_message_and_stream(
             "Write at least 2-3 sentences explaining your thought process inside the tags."
         )
     else:
+        # Only append "Respond directly" if web search or visual reinspection is not active, to avoid contradicting tool calling instructions.
+        if not (web_search or (use_rag and has_visual_chunks)):
+            system_instruction += (
+                "\n\nRespond directly"
+            )
+
+    # 6.6. When web search is enabled, add an explicit instruction so the model knows to use the tool.
+    if web_search:
         system_instruction += (
-            "\n\nRespond directly"
+            "\n\nIMPORTANT: You have access to a 'web_search' tool. For ANY question about current events, "
+            "live scores, recent news, real-time data, or facts you are unsure about, you MUST call the "
+            "web_search tool FIRST before attempting to answer. Do NOT guess or rely on your training data "
+            "for time-sensitive or factual queries. Always search the web first."
         )
 
     # 7. Assemble the full message list for the LLM.
@@ -578,12 +595,6 @@ async def _process_chat_message_and_stream(
         # A. Emit source citations as the very first SSE event (RAG only).
         if matching_data or meta_data:
             yield f"data: {json.dumps({'sources': matching_data, 'search_metadata': meta_data})}\n\n"
-
-        # Check if the retrieved context contains any visual descriptions
-        has_visual_chunks = any(
-            "[Image Description" in item.get("text", "")
-            for item in matching_data
-        )
 
         direct_content = None
 
