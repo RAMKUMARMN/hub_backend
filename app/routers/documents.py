@@ -9,6 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFi
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi.responses import FileResponse
+from pathlib import Path
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.document import Document
@@ -110,6 +112,34 @@ async def list_documents(
     )
     return result.scalars().all()
 
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.user_id == current_user.id,
+        )
+    )
+
+    doc = result.scalar_one_or_none()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    file_path = UPLOAD_DIR.resolve() / Path(doc.storage_path)
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Stored file not found")
+
+    return FileResponse(
+        path=file_path,
+        filename=doc.filename,
+        media_type="application/octet-stream",
+    )
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(

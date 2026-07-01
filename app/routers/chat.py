@@ -124,6 +124,21 @@ async def send_message(
         db.add(user_msg)
         await db.commit()
 
+        # Auto rename new chat
+        session_result = await db.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )
+        session = session_result.scalar_one()
+
+        if session.title == "New Chat":
+            title = body.content.strip()
+
+            if len(title) > 40:
+                title = title[:40] + "..."
+
+            session.title = title
+            await db.commit()
+
         # Build message history for context
         history_result = await db.execute(
             select(ChatMessage)
@@ -155,3 +170,31 @@ async def send_message(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+@router.put("/sessions/{session_id}", response_model=SessionResponse)
+async def rename_session(
+    session_id: uuid.UUID,
+    body: CreateSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(ChatSession).where(
+            ChatSession.id == session_id,
+            ChatSession.user_id == current_user.id,
+        )
+    )
+
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=404,
+            detail="Session not found",
+        )
+
+    session.title = body.title
+
+    await db.commit()
+    await db.refresh(session)
+
+    return session
