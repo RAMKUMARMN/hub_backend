@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.auth.security.dependencies import get_current_user
@@ -15,9 +15,14 @@ router = APIRouter(prefix="/calendar", tags=["calendar"])
 async def create_event(
     body: CreateCalendarEventRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    x_google_token: str | None = Header(None)
 ):
-    event = await CalendarService(db).create_event(current_user.id, body)
+    # Write debug info to a log file
+    with open("/home/albin/Cixio/hub_backend/debug_token.log", "a") as f:
+        f.write(f"CREATE_EVENT called. x_google_token: {x_google_token}\n")
+        
+    event = await CalendarService(db).create_event(current_user.id, body, google_token=x_google_token)
 
     await invalidate_dashboard_cache(current_user.id)
 
@@ -45,12 +50,14 @@ async def update_event(
     event_id: uuid.UUID,
     body: UpdateCalendarEventRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    x_google_token: str | None = Header(None)
 ):
     event = await CalendarService(db).update_event(
         event_id,
         current_user.id,
-        body
+        body,
+        google_token=x_google_token
     )
 
     await invalidate_dashboard_cache(current_user.id)
@@ -61,11 +68,13 @@ async def update_event(
 async def delete_event(
     event_id: uuid.UUID,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    x_google_token: str | None = Header(None)
 ):
     await CalendarService(db).delete_event(
         event_id,
-        current_user.id
+        current_user.id,
+        google_token=x_google_token
     )
 
     await invalidate_dashboard_cache(current_user.id)
@@ -90,3 +99,13 @@ async def get_sync_status(
     db: AsyncSession = Depends(get_db)
 ):
     return await CalendarSyncService(db).get_sync_status(current_user.id)
+
+
+@router.get("/config")
+async def get_calendar_config(
+    current_user: User = Depends(get_current_user)
+):
+    from app.config import settings
+    return {
+        "google_client_id": settings.google_client_id
+    }

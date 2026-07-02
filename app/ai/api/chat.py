@@ -321,10 +321,15 @@ async def _process_chat_message_and_stream(
     request: Request | None = None,
     document_ids: list[uuid.UUID] | None = None,
     use_reranker: bool = False,
+    agent_mode: bool = False,
 ) -> StreamingResponse:
     """
     Core messaging and streaming logic shared between POST and GET endpoints.
     """
+    if agent_mode:
+        use_rag = False
+        web_search = True
+
     # 1. Verify the session belongs to the authenticated user.
     sess_result = await db.execute(
         select(ChatSession).where(
@@ -576,6 +581,20 @@ async def _process_chat_message_and_stream(
             "for time-sensitive or factual queries. Always search the web first."
         )
 
+    # 6.7. Inject agent instructions if agent_mode is active.
+    if agent_mode:
+        system_instruction += (
+            "\n\nIMPORTANT: You are in AGENT mode. You have autonomous access to tools for managing "
+            "documents, notes, tasks (todos), calendar, and focus sessions. You MUST call the most "
+            "appropriate tool FIRST to retrieve or modify data before answering the user:\n"
+            "- If user asks about their files: call 'list_session_documents' or 'search_documents'.\n"
+            "- If user asks to read a specific file: call 'read_document_content' with its UUID.\n"
+            "- If user asks to manage notes (create, list, search, delete): call notes tools.\n"
+            "- If user asks to manage tasks (create, list, update, delete todos): call todo tools.\n"
+            "- If user asks to schedule events or start focus sessions: call calendar/focus tools.\n"
+            "Do NOT guess database entries. Always call a tool first to fetch accuracy."
+        )
+
     # 7. Assemble the full message list for the LLM.
     from datetime import datetime
     current_time_str = datetime.now().strftime("%A, %B %d, %Y, %I:%M %p")
@@ -655,11 +674,231 @@ async def _process_chat_message_and_stream(
             }
             tools.append(web_search_tool)
 
+        if agent_mode:
+            # 1. Documents & Search
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "search_documents",
+                    "description": "Searches for semantically matching content inside the user's uploaded files (RAG). Use this when the query asks about document contents.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "The query to search the documents for."}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_session_documents",
+                    "description": "Lists all documents uploaded to the current study session.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "read_document_content",
+                    "description": "Reads the full, complete text content of a specific document by its ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "document_id": {"type": "string", "description": "The unique UUID of the document to read."}
+                        },
+                        "required": ["document_id"]
+                    }
+                }
+            })
+
+            # 2. Todos / Tasks
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "create_todo",
+                    "description": "Creates a new task or todo item.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "The task title."},
+                            "description": {"type": "string", "description": "Optional detailed description."},
+                            "due_date": {"type": "string", "description": "Optional due date (ISO 8601 format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)."},
+                            "priority": {"type": "string", "enum": ["low", "medium", "high"], "description": "Task priority."},
+                            "reminder_time": {"type": "string", "description": "Optional reminder date/time (ISO 8601 format)."}
+                        },
+                        "required": ["title"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_todos",
+                    "description": "Lists the user's tasks or todo items.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "completed": {"type": "boolean", "description": "Filter by completed status (true/false). If omitted, returns all."}
+                        }
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "update_todo",
+                    "description": "Updates an existing todo task (e.g. marking it as completed or changing title/description).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "todo_id": {"type": "string", "description": "The UUID of the todo task to update."},
+                            "title": {"type": "string", "description": "Optional new title."},
+                            "description": {"type": "string", "description": "Optional new description."},
+                            "completed": {"type": "boolean", "description": "Set to true to complete the task, or false to mark it incomplete."}
+                        },
+                        "required": ["todo_id"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "delete_todo",
+                    "description": "Deletes a todo task by its UUID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "todo_id": {"type": "string", "description": "The UUID of the todo task to delete."}
+                        },
+                        "required": ["todo_id"]
+                    }
+                }
+            })
+
+            # 3. Notes
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "create_note",
+                    "description": "Creates a new study or quick note.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "The note title."},
+                            "content": {"type": "string", "description": "The body content of the note."},
+                            "tag": {"type": "string", "description": "Optional tag/category to classify the note."},
+                            "pinned": {"type": "boolean", "description": "Whether to pin the note to the dashboard."}
+                        },
+                        "required": ["title", "content"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_notes",
+                    "description": "Lists the user's saved notes.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tag": {"type": "string", "description": "Optional tag to filter notes by."},
+                            "pinned": {"type": "boolean", "description": "Optional pinned status to filter notes by."}
+                        }
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "search_notes",
+                    "description": "Searches inside note titles and contents for matching text.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "The text to search for."}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "delete_note",
+                    "description": "Deletes a note by its UUID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "note_id": {"type": "string", "description": "The UUID of the note to delete."}
+                        },
+                        "required": ["note_id"]
+                    }
+                }
+            })
+
+            # 4. Calendar & Focus
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "create_calendar_event",
+                    "description": "Schedules a new event on the user's calendar.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": "The event title."},
+                            "description": {"type": "string", "description": "Optional event description."},
+                            "start_time": {"type": "string", "description": "Start date/time (ISO 8601 format: YYYY-MM-DDTHH:MM:SS)."},
+                            "end_time": {"type": "string", "description": "End date/time (ISO 8601 format: YYYY-MM-DDTHH:MM:SS)."},
+                            "location": {"type": "string", "description": "Optional location of the event."}
+                        },
+                        "required": ["title", "start_time", "end_time"]
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "list_calendar_events",
+                    "description": "Lists calendar events within a specific time range.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "start": {"type": "string", "description": "Optional start date/time filter (ISO 8601 format)."},
+                            "end": {"type": "string", "description": "Optional end date/time filter (ISO 8601 format)."}
+                        }
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "start_focus_session",
+                    "description": "Starts a new timed productivity focus session.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "session_type": {"type": "string", "enum": ["pomodoro", "short_break", "long_break"], "description": "The type of focus session."}
+                        }
+                    }
+                }
+            })
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "get_productivity_metrics",
+                    "description": "Fetches aggregated study metrics and focus history stats.",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            })
+
         if tools:
             try:
-                # Execute up to 3 sequential tool call turns
-                max_turns = 3
+                # Execute up to 10 sequential tool call turns
+                max_turns = 10
                 turns_used = 0
+                search_count = 0
                 executed_tool_calls = set()
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
                 
@@ -726,6 +965,7 @@ async def _process_chat_message_and_stream(
                             if func_name == "reinspect_document_page":
                                 doc_id_str = args.get("document_id")
                                 page_num = args.get("page_number")
+                                specific_question = args.get("specific_question") or "What is on this page?"
                                 # Yield status update to frontend
                                 yield f"data: {json.dumps({'status': f'👁️ Re-inspecting page {page_num or 1}...'})}\n\n"
                                 
@@ -833,16 +1073,426 @@ async def _process_chat_message_and_stream(
                             elif func_name == "web_search":
                                 query_arg = args.get("query")
                                 if query_arg:
-                                    # Yield status update to frontend
-                                    yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
-                                    from app.ai.services.search_service import unified_web_search
-                                    try:
-                                        tool_result = await unified_web_search(query_arg, max_results=5)
-                                    except Exception as e:
-                                        logger.error("Error in unified_web_search: %s", e, exc_info=True)
-                                        tool_result = f"Error during web search: {str(e)}"
+                                    if search_count >= 3:
+                                        tool_result = (
+                                            "Error: You have reached the maximum allowed limit of 3 web searches "
+                                            "for this request. Please proceed to write your final response or perform other "
+                                            "tasks using the search results you have already retrieved."
+                                        )
+                                    else:
+                                        search_count += 1
+                                        # Yield status update to frontend
+                                        yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
+                                        from app.ai.services.search_service import unified_web_search
+                                        try:
+                                            tool_result = await unified_web_search(query_arg, max_results=5)
+                                        except Exception as e:
+                                            logger.error("Error in unified_web_search: %s", e, exc_info=True)
+                                            tool_result = f"Error during web search: {str(e)}"
                                 else:
                                     tool_result = "Error: search query argument is missing."
+
+                            elif func_name == "search_documents":
+                                query_arg = args.get("query")
+                                if query_arg:
+                                    yield f"data: {json.dumps({'status': f'📚 Searching files for \"{query_arg}\"...'})}\n\n"
+                                    try:
+                                        from app.ai.services.vector_service import search_relevant_chunks
+                                        async with AsyncSessionLocal() as db_session:
+                                            allowed_docs_result = await db_session.execute(
+                                                select(Document.id).where(
+                                                    Document.user_id == current_user.id,
+                                                    Document.processed == True,
+                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                )
+                                            )
+                                            allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
+                                            
+                                            if allowed_doc_ids:
+                                                chunks = await search_relevant_chunks(
+                                                    user_id=current_user.id,
+                                                    query=query_arg,
+                                                    limit=rag_chunk_limit,
+                                                    allowed_document_ids=allowed_doc_ids,
+                                                    use_hyde=use_hyde,
+                                                    retrieval_mode=retrieval_mode,
+                                                    use_reranker=use_reranker,
+                                                    session_id=session_id,
+                                                )
+                                                tool_result = "\n\n".join(
+                                                    f"Document ID: {chunk.get('document_id')}\n"
+                                                    f"Source Document: {chunk.get('filename')}\n"
+                                                    f"Content: {chunk.get('text')}"
+                                                    for chunk in chunks if not chunk.get("is_meta")
+                                                )
+                                                if not tool_result.strip():
+                                                    tool_result = "No matching document contents found."
+                                            else:
+                                                tool_result = "No documents found in this session."
+                                    except Exception as e:
+                                        logger.error("Error in search_documents: %s", e, exc_info=True)
+                                        tool_result = f"Error searching documents: {str(e)}"
+                                else:
+                                    tool_result = "Error: search query is missing."
+
+                            elif func_name == "list_session_documents":
+                                yield f"data: {json.dumps({'status': '📚 Fetching documents list...'})}\n\n"
+                                try:
+                                    async with AsyncSessionLocal() as db_session:
+                                        allowed_docs_result = await db_session.execute(
+                                            select(Document).where(
+                                                Document.user_id == current_user.id,
+                                                Document.processed == True,
+                                                (Document.session_id == None) | (Document.session_id == session_id),
+                                            )
+                                        )
+                                        allowed_docs = allowed_docs_result.scalars().all()
+                                        if allowed_docs:
+                                            tool_result = "\n".join(
+                                                f"- ID: {doc.id} | Filename: {doc.filename} | Type: {doc.file_type}"
+                                                for doc in allowed_docs
+                                            )
+                                        else:
+                                            tool_result = "No documents have been uploaded to this session yet."
+                                except Exception as e:
+                                    logger.error("Error in list_session_documents: %s", e, exc_info=True)
+                                    tool_result = f"Error listing documents: {str(e)}"
+
+                            elif func_name == "read_document_content":
+                                doc_id_str = args.get("document_id")
+                                if doc_id_str:
+                                    try:
+                                        doc_id = uuid.UUID(doc_id_str)
+                                        yield f"data: {json.dumps({'status': f'📖 Reading file contents...'})}\n\n"
+                                        async with AsyncSessionLocal() as db_session:
+                                            doc_res = await db_session.execute(
+                                                select(Document).where(
+                                                    Document.id == doc_id,
+                                                    Document.user_id == current_user.id,
+                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                )
+                                            )
+                                            doc_obj = doc_res.scalar_one_or_none()
+                                            if doc_obj:
+                                                doc_text = await ai_client.extract_text(doc_obj.storage_path, doc_obj.file_type)
+                                                if doc_text.strip():
+                                                    truncated_text = doc_text.strip()
+                                                    if len(truncated_text) > 20000:
+                                                        truncated_text = truncated_text[:20000] + "\n... [Truncated due to context size constraints] ..."
+                                                    tool_result = f"--- Document: {doc_obj.filename} ---\n{truncated_text}"
+                                                else:
+                                                    tool_result = "The document appears to be empty."
+                                            else:
+                                                tool_result = "Document not found or you do not have permission to access it."
+                                    except ValueError:
+                                        tool_result = "Error: Invalid document_id format."
+                                    except Exception as e:
+                                        logger.error("Error in read_document_content: %s", e, exc_info=True)
+                                        tool_result = f"Error reading document: {str(e)}"
+                                else:
+                                    tool_result = "Error: document_id argument is missing."
+
+                            elif func_name == "create_todo":
+                                title = args.get("title")
+                                if title:
+                                    yield f"data: {json.dumps({'status': f'✅ Creating task \"{title}\"...'})}\n\n"
+                                    try:
+                                        from app.models.todo import Todo
+                                        from datetime import date
+                                        due_date_val = None
+                                        if args.get("due_date"):
+                                            try:
+                                                due_date_val = datetime.fromisoformat(args["due_date"].replace("Z", "+00:00"))
+                                            except ValueError:
+                                                pass
+                                        
+                                        reminder_time_val = None
+                                        if args.get("reminder_time"):
+                                            try:
+                                                reminder_time_val = datetime.fromisoformat(args["reminder_time"].replace("Z", "+00:00"))
+                                            except ValueError:
+                                                pass
+
+                                        async with AsyncSessionLocal() as db_session:
+                                            todo = Todo(
+                                                user_id=current_user.id,
+                                                title=title,
+                                                description=args.get("description"),
+                                                due_date=due_date_val,
+                                                priority=args.get("priority", "medium"),
+                                                reminder_time=reminder_time_val,
+                                            )
+                                            db_session.add(todo)
+                                            await db_session.commit()
+                                            await db_session.refresh(todo)
+                                            from app.services.dashboard_service import invalidate_dashboard_cache
+                                            await invalidate_dashboard_cache(current_user.id)
+                                            tool_result = f"Successfully created todo item '{todo.title}' with ID: {todo.id}."
+                                    except Exception as e:
+                                        logger.error("Error in create_todo: %s", e, exc_info=True)
+                                        tool_result = f"Error creating task: {str(e)}"
+                                else:
+                                    tool_result = "Error: task title is missing."
+
+                            elif func_name == "list_todos":
+                                yield f"data: {json.dumps({'status': '✅ Fetching tasks list...'})}\n\n"
+                                try:
+                                    from app.models.todo import Todo
+                                    completed_filter = args.get("completed")
+                                    async with AsyncSessionLocal() as db_session:
+                                        query = select(Todo).where(Todo.user_id == current_user.id).order_by(Todo.created_at.desc())
+                                        if completed_filter is not None:
+                                            query = query.where(Todo.completed == completed_filter)
+                                        result = await db_session.execute(query)
+                                        todos = result.scalars().all()
+                                        if todos:
+                                            tool_result = "\n".join(
+                                                f"- ID: {t.id} | Title: {t.title} | Priority: {t.priority} | Completed: {t.completed} | Due: {t.due_date}"
+                                                for t in todos
+                                            )
+                                        else:
+                                            tool_result = "No todo tasks found."
+                                except Exception as e:
+                                    logger.error("Error in list_todos: %s", e, exc_info=True)
+                                    tool_result = f"Error listing tasks: {str(e)}"
+
+                            elif func_name == "update_todo":
+                                todo_id_str = args.get("todo_id")
+                                if todo_id_str:
+                                    try:
+                                        todo_id = uuid.UUID(todo_id_str)
+                                        yield f"data: {json.dumps({'status': f'✅ Updating task...'})}\n\n"
+                                        from app.models.todo import Todo
+                                        async with AsyncSessionLocal() as db_session:
+                                            result = await db_session.execute(
+                                                select(Todo).where(Todo.id == todo_id, Todo.user_id == current_user.id)
+                                            )
+                                            todo = result.scalar_one_or_none()
+                                            if todo:
+                                                if args.get("title") is not None:
+                                                    todo.title = args["title"]
+                                                if args.get("description") is not None:
+                                                    todo.description = args["description"]
+                                                if args.get("completed") is not None:
+                                                    todo.completed = args["completed"]
+                                                await db_session.commit()
+                                                from app.services.dashboard_service import invalidate_dashboard_cache
+                                                await invalidate_dashboard_cache(current_user.id)
+                                                tool_result = f"Task '{todo.title}' updated successfully."
+                                            else:
+                                                tool_result = "Task not found."
+                                    except ValueError:
+                                        tool_result = "Error: Invalid task UUID."
+                                    except Exception as e:
+                                        logger.error("Error in update_todo: %s", e, exc_info=True)
+                                        tool_result = f"Error updating task: {str(e)}"
+                                else:
+                                    tool_result = "Error: todo_id argument is missing."
+
+                            elif func_name == "delete_todo":
+                                todo_id_str = args.get("todo_id")
+                                if todo_id_str:
+                                    try:
+                                        todo_id = uuid.UUID(todo_id_str)
+                                        yield f"data: {json.dumps({'status': f'🗑️ Deleting task...'})}\n\n"
+                                        from app.models.todo import Todo
+                                        async with AsyncSessionLocal() as db_session:
+                                            result = await db_session.execute(
+                                                select(Todo).where(Todo.id == todo_id, Todo.user_id == current_user.id)
+                                            )
+                                            todo = result.scalar_one_or_none()
+                                            if todo:
+                                                await db_session.delete(todo)
+                                                await db_session.commit()
+                                                from app.services.dashboard_service import invalidate_dashboard_cache
+                                                await invalidate_dashboard_cache(current_user.id)
+                                                tool_result = f"Task deleted successfully."
+                                            else:
+                                                tool_result = "Task not found."
+                                    except ValueError:
+                                        tool_result = "Error: Invalid task UUID."
+                                    except Exception as e:
+                                        logger.error("Error in delete_todo: %s", e, exc_info=True)
+                                        tool_result = f"Error deleting task: {str(e)}"
+                                else:
+                                    tool_result = "Error: todo_id argument is missing."
+
+                            elif func_name == "create_note":
+                                title = args.get("title")
+                                content = args.get("content")
+                                if title and content:
+                                    yield f"data: {json.dumps({'status': f'📝 Creating note \"{title}\"...'})}\n\n"
+                                    try:
+                                        from app.schemas.notes import CreateNoteRequest
+                                        from app.services.notes_service import NotesService
+                                        async with AsyncSessionLocal() as db_session:
+                                            note_req = CreateNoteRequest(
+                                                title=title,
+                                                content=content,
+                                                tags=[args.get("tag")] if args.get("tag") else [],
+                                                is_pinned=args.get("pinned", False),
+                                            )
+                                            note = await NotesService(db_session).create_note(current_user.id, note_req)
+                                            tool_result = f"Note '{note.title}' created successfully with ID: {note.id}."
+                                    except Exception as e:
+                                        logger.error("Error in create_note: %s", e, exc_info=True)
+                                        tool_result = f"Error creating note: {str(e)}"
+                                else:
+                                    tool_result = "Error: note title or content is missing."
+
+                            elif func_name == "list_notes":
+                                yield f"data: {json.dumps({'status': '📝 Fetching notes list...'})}\n\n"
+                                try:
+                                    from app.services.notes_service import NotesService
+                                    tag = args.get("tag")
+                                    pinned = args.get("pinned")
+                                    async with AsyncSessionLocal() as db_session:
+                                        notes = await NotesService(db_session).list_notes(
+                                            user_id=current_user.id,
+                                            tag=tag,
+                                            pinned=pinned
+                                        )
+                                        if notes:
+                                            tool_result = "\n".join(
+                                                f"- ID: {n.id} | Title: {n.title} | Tags: {', '.join(n.tags)} | Pinned: {n.is_pinned}\nContent Preview: {n.content[:100]}..."
+                                                for n in notes
+                                            )
+                                        else:
+                                            tool_result = "No notes found."
+                                except Exception as e:
+                                    logger.error("Error in list_notes: %s", e, exc_info=True)
+                                    tool_result = f"Error listing notes: {str(e)}"
+
+                            elif func_name == "search_notes":
+                                query_arg = args.get("query")
+                                if query_arg:
+                                    yield f"data: {json.dumps({'status': f'📝 Searching notes for \"{query_arg}\"...'})}\n\n"
+                                    try:
+                                        from app.services.notes_service import NotesService
+                                        async with AsyncSessionLocal() as db_session:
+                                            notes = await NotesService(db_session).search_notes(
+                                                user_id=current_user.id,
+                                                q=query_arg
+                                            )
+                                            if notes:
+                                                tool_result = "\n".join(
+                                                    f"- ID: {n.id} | Title: {n.title}\nContent: {n.content}"
+                                                    for n in notes
+                                                )
+                                            else:
+                                                tool_result = "No notes matched your search query."
+                                    except Exception as e:
+                                        logger.error("Error in search_notes: %s", e, exc_info=True)
+                                        tool_result = f"Error searching notes: {str(e)}"
+                                else:
+                                    tool_result = "Error: search query argument is missing."
+
+                            elif func_name == "delete_note":
+                                note_id_str = args.get("note_id")
+                                if note_id_str:
+                                    try:
+                                        note_id = uuid.UUID(note_id_str)
+                                        yield f"data: {json.dumps({'status': f'🗑️ Deleting note...'})}\n\n"
+                                        from app.services.notes_service import NotesService
+                                        async with AsyncSessionLocal() as db_session:
+                                            await NotesService(db_session).delete_note(note_id, current_user.id)
+                                            tool_result = "Note deleted successfully."
+                                    except ValueError:
+                                        tool_result = "Error: Invalid note UUID."
+                                    except Exception as e:
+                                        logger.error("Error in delete_note: %s", e, exc_info=True)
+                                        tool_result = f"Error deleting note: {str(e)}"
+                                else:
+                                    tool_result = "Error: note_id argument is missing."
+
+                            elif func_name == "create_calendar_event":
+                                title = args.get("title")
+                                start_time_str = args.get("start_time")
+                                end_time_str = args.get("end_time")
+                                if title and start_time_str and end_time_str:
+                                    yield f"data: {json.dumps({'status': f'📅 Scheduling event \"{title}\"...'})}\n\n"
+                                    try:
+                                        from app.schemas.calendar import CreateCalendarEventRequest
+                                        from app.services.calendar_service import CalendarService
+                                        start_dt = datetime.fromisoformat(start_time_str.replace("Z", "+00:00"))
+                                        end_dt = datetime.fromisoformat(end_time_str.replace("Z", "+00:00"))
+                                        event_req = CreateCalendarEventRequest(
+                                            title=title,
+                                            description=args.get("description"),
+                                            start_time=start_dt,
+                                            end_time=end_dt,
+                                            location=args.get("location"),
+                                        )
+                                        async with AsyncSessionLocal() as db_session:
+                                            event = await CalendarService(db_session).create_event(current_user.id, event_req)
+                                            from app.services.dashboard_service import invalidate_dashboard_cache
+                                            await invalidate_dashboard_cache(current_user.id)
+                                            tool_result = f"Calendar event '{event.title}' scheduled successfully with ID: {event.id}."
+                                    except Exception as e:
+                                        logger.error("Error in create_calendar_event: %s", e, exc_info=True)
+                                        tool_result = f"Error scheduling calendar event: {str(e)}"
+                                else:
+                                    tool_result = "Error: calendar event title, start_time, or end_time is missing."
+
+                            elif func_name == "list_calendar_events":
+                                yield f"data: {json.dumps({'status': '📅 Fetching calendar events...'})}\n\n"
+                                try:
+                                    from app.services.calendar_service import CalendarService
+                                    start_dt = None
+                                    if args.get("start"):
+                                        start_dt = datetime.fromisoformat(args["start"].replace("Z", "+00:00"))
+                                    end_dt = None
+                                    if args.get("end"):
+                                        end_dt = datetime.fromisoformat(args["end"].replace("Z", "+00:00"))
+                                    
+                                    async with AsyncSessionLocal() as db_session:
+                                        events = await CalendarService(db_session).list_events(
+                                            user_id=current_user.id,
+                                            start=start_dt,
+                                            end=end_dt
+                                        )
+                                        if events:
+                                            tool_result = "\n".join(
+                                                f"- ID: {e.id} | Title: {e.title} | Start: {e.start_time} | End: {e.end_time} | Loc: {e.location or 'N/A'}"
+                                                for e in events
+                                            )
+                                        else:
+                                            tool_result = "No calendar events found."
+                                except Exception as e:
+                                    logger.error("Error in list_calendar_events: %s", e, exc_info=True)
+                                    tool_result = f"Error listing calendar events: {str(e)}"
+
+                            elif func_name == "start_focus_session":
+                                session_type = args.get("session_type", "pomodoro")
+                                yield f"data: {json.dumps({'status': f'⏱️ Launching {session_type} focus session...'})}\n\n"
+                                try:
+                                    from app.services.focus_service import FocusService
+                                    async with AsyncSessionLocal() as db_session:
+                                        focus_sess = await FocusService(db_session).start_session(
+                                            user_id=current_user.id,
+                                            session_type=session_type
+                                        )
+                                        tool_result = f"Focus session ({session_type}) started successfully with ID: {focus_sess.id}."
+                                except Exception as e:
+                                    logger.error("Error in start_focus_session: %s", e, exc_info=True)
+                                    tool_result = f"Error starting focus session: {str(e)}"
+
+                            elif func_name == "get_productivity_metrics":
+                                yield f"data: {json.dumps({'status': '📊 Extracting study metrics...'})}\n\n"
+                                try:
+                                    from app.services.focus_service import FocusService
+                                    async with AsyncSessionLocal() as db_session:
+                                        metrics = await FocusService(db_session).get_metrics(current_user.id)
+                                        tool_result = (
+                                            f"Productivity Metrics:\n"
+                                            f"- Total Focus Time: {metrics.total_focus_time_minutes} minutes\n"
+                                            f"- Total Focus Sessions: {metrics.total_sessions_count}\n"
+                                            f"- Completed Sessions: {metrics.completed_sessions_count}\n"
+                                            f"- Daily Goal Met: {metrics.daily_goal_met}"
+                                        )
+                                except Exception as e:
+                                    logger.error("Error in get_productivity_metrics: %s", e, exc_info=True)
+                                    tool_result = f"Error fetching metrics: {str(e)}"
 
                             else:
                                 tool_result = f"Error: unknown tool '{func_name}'."
@@ -975,6 +1625,7 @@ async def send_message(
         ai_client=ai_client,
         request=request,
         use_reranker=body.use_reranker,
+        agent_mode=body.agent_mode,
     )
 
 
@@ -993,6 +1644,7 @@ async def stream_messages_get(
     rag_chunk_limit: int = 4,
     document_ids: str | None = None,
     use_reranker: bool = False,
+    agent_mode: bool = False,
     db: AsyncSession = Depends(get_db),
     ai_client: AIClient = Depends(get_ai_client),
 ):
@@ -1046,4 +1698,5 @@ async def stream_messages_get(
         ai_client=ai_client,
         request=request,
         use_reranker=use_reranker,
+        agent_mode=agent_mode,
     )
