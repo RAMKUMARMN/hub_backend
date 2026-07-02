@@ -121,11 +121,8 @@ async def google_token_login(
             detail="Account suspended",
         )
 
-    token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
-    return TokenResponse(
-        access_token=create_access_token(token_data),
-        refresh_token=create_refresh_token(token_data),
-    )
+    from app.auth.services.token_service import TokenService
+    return await TokenService.issue_pair(user, db)
 
 
 from pydantic import BaseModel, EmailStr
