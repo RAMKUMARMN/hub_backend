@@ -898,6 +898,7 @@ async def _process_chat_message_and_stream(
                 # Execute up to 10 sequential tool call turns
                 max_turns = 10
                 turns_used = 0
+                search_count = 0
                 executed_tool_calls = set()
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
                 
@@ -1072,14 +1073,22 @@ async def _process_chat_message_and_stream(
                             elif func_name == "web_search":
                                 query_arg = args.get("query")
                                 if query_arg:
-                                    # Yield status update to frontend
-                                    yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
-                                    from app.ai.services.search_service import unified_web_search
-                                    try:
-                                        tool_result = await unified_web_search(query_arg, max_results=5)
-                                    except Exception as e:
-                                        logger.error("Error in unified_web_search: %s", e, exc_info=True)
-                                        tool_result = f"Error during web search: {str(e)}"
+                                    if search_count >= 3:
+                                        tool_result = (
+                                            "Error: You have reached the maximum allowed limit of 3 web searches "
+                                            "for this request. Please proceed to write your final response or perform other "
+                                            "tasks using the search results you have already retrieved."
+                                        )
+                                    else:
+                                        search_count += 1
+                                        # Yield status update to frontend
+                                        yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
+                                        from app.ai.services.search_service import unified_web_search
+                                        try:
+                                            tool_result = await unified_web_search(query_arg, max_results=5)
+                                        except Exception as e:
+                                            logger.error("Error in unified_web_search: %s", e, exc_info=True)
+                                            tool_result = f"Error during web search: {str(e)}"
                                 else:
                                     tool_result = "Error: search query argument is missing."
 
