@@ -1329,8 +1329,8 @@ async def _process_chat_message_and_stream(
                                             note_req = CreateNoteRequest(
                                                 title=title,
                                                 content=content,
-                                                tag=args.get("tag"),
-                                                pinned=args.get("pinned", False),
+                                                tags=[args.get("tag")] if args.get("tag") else [],
+                                                is_pinned=args.get("pinned", False),
                                             )
                                             note = await NotesService(db_session).create_note(current_user.id, note_req)
                                             tool_result = f"Note '{note.title}' created successfully with ID: {note.id}."
@@ -1354,7 +1354,7 @@ async def _process_chat_message_and_stream(
                                         )
                                         if notes:
                                             tool_result = "\n".join(
-                                                f"- ID: {n.id} | Title: {n.title} | Tag: {n.tag} | Pinned: {n.pinned}\nContent Preview: {n.content[:100]}..."
+                                                f"- ID: {n.id} | Title: {n.title} | Tags: {', '.join(n.tags)} | Pinned: {n.is_pinned}\nContent Preview: {n.content[:100]}..."
                                                 for n in notes
                                             )
                                         else:

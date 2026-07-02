@@ -54,7 +54,7 @@ class CalendarSyncService:
                     logger.error("Google OAuth token expired or invalid.")
                     from fastapi import HTTPException, status
                     raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Google OAuth token expired or invalid. Please sign in again."
                     )
                 elif response.status_code != 200:
