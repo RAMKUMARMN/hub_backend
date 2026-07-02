@@ -895,8 +895,8 @@ async def _process_chat_message_and_stream(
 
         if tools:
             try:
-                # Execute up to 3 sequential tool call turns
-                max_turns = 3
+                # Execute up to 10 sequential tool call turns
+                max_turns = 10
                 turns_used = 0
                 executed_tool_calls = set()
                 parser = ThinkTagParser(thinking_mode=thinking_mode)
