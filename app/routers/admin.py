@@ -3,6 +3,7 @@ Admin router — /api/v1/admin/*
 
 Requires is_admin=True on the authenticated user.
 """
+
 import csv
 import io
 import secrets
@@ -54,7 +55,9 @@ async def bulk_create_users(
     if not rows:
         raise HTTPException(status_code=400, detail="CSV is empty")
     if not required_columns.issubset(set(rows[0].keys())):
-        raise HTTPException(status_code=400, detail=f"CSV must have columns: {required_columns}")
+        raise HTTPException(
+            status_code=400, detail=f"CSV must have columns: {required_columns}"
+        )
 
     created = 0
     skipped = 0

@@ -1,4 +1,5 @@
 """Alembic environment script for async SQLAlchemy migrations."""
+
 import asyncio
 from logging.config import fileConfig
 

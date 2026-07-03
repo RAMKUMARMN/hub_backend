@@ -3,6 +3,7 @@ File storage service — local filesystem in dev, AWS S3 in production.
 
 Set USE_S3=true in .env to switch to S3.
 """
+
 import os
 import uuid
 from pathlib import Path

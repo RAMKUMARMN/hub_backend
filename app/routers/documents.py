@@ -3,9 +3,17 @@ Documents router — /api/v1/documents/*
 
 Students: implement the upload endpoint to trigger async text extraction + RAG ingestion.
 """
+
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +39,9 @@ ALLOWED_TYPES = {
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post("/upload", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/upload", response_model=DocumentResponse, status_code=status.HTTP_202_ACCEPTED
+)
 async def upload_document(
     file: UploadFile,
     background_tasks: BackgroundTasks,
@@ -44,7 +54,9 @@ async def upload_document(
     Returns 202 immediately — check `processed` field later to see when done.
     """
     if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file.content_type}")
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported file type: {file.content_type}"
+        )
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
@@ -78,7 +90,9 @@ async def _process_document(
 
     async with AsyncSessionLocal() as db:
         try:
-            result_doc = await db.execute(select(Document).where(Document.id == document_id))
+            result_doc = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
             doc = result_doc.scalar_one_or_none()
             if not doc:
                 return
@@ -86,13 +100,16 @@ async def _process_document(
             text = await extract_text(absolute_path, doc.file_type)
             await ingest_document(user_id, document_id, text, filename=doc.filename)
 
-            result = await db.execute(select(Document).where(Document.id == document_id))
+            result = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
             doc = result.scalar_one_or_none()
             if doc:
                 doc.processed = True
                 await db.commit()
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).error(
                 "Document processing failed for %s: %s", document_id, exc, exc_info=True
             )

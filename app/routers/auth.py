@@ -3,6 +3,7 @@ Auth router — /api/v1/auth/*
 
 Students: implement each TODO endpoint.
 """
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,9 @@ from app.services.storage_service import save_file
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """
     Register a new user account.
@@ -146,7 +149,9 @@ async def upload_avatar(
     """Upload a profile picture."""
     allowed = {"image/jpeg", "image/png", "image/webp"}
     if file.content_type not in allowed:
-        raise HTTPException(status_code=400, detail="Only JPEG, PNG, and WebP images are allowed")
+        raise HTTPException(
+            status_code=400, detail="Only JPEG, PNG, and WebP images are allowed"
+        )
 
     contents = await file.read()
     path = await save_file(contents, file.filename, current_user.id)

@@ -9,6 +9,7 @@ The AI service (cixio-hub/ai, port 8003) handles:
 Students (AI/LLM role): implement the streaming logic in cixio-hub/ai.
 Students (Backend role): this file is already wired — focus on chat.py router.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,4 +71,3 @@ async def get_embedding(text: str) -> list[float]:
         response = await client.post("/api/v1/embed", json={"text": text})
         response.raise_for_status()
         return response.json()["embedding"]
-

@@ -4,6 +4,7 @@ Public endpoint: POST /api/v1/poll/submit  (no auth required — anonymous)
 Admin endpoint:  GET  /api/v1/poll/results  (admin auth required)
 Admin endpoint:  GET  /api/v1/poll/responses (admin auth required — raw list)
 """
+
 from collections import Counter
 
 from fastapi import APIRouter, Depends, status
@@ -49,6 +50,7 @@ async def get_poll_results(
 ):
     if not current_user.is_admin:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=403, detail="Admin access required")
 
     result = await db.execute(select(PollResponse))
@@ -94,6 +96,7 @@ async def list_poll_responses(
 ):
     if not current_user.is_admin:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=403, detail="Admin access required")
 
     result = await db.execute(

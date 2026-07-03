@@ -6,7 +6,11 @@ from app.services.auth_service import (
     decode_token,
 )
 from app.services.llm_service import chat_stream, get_embedding
-from app.services.rag_service import ingest_document, retrieve_chunks, delete_document_chunks
+from app.services.rag_service import (
+    ingest_document,
+    retrieve_chunks,
+    delete_document_chunks,
+)
 from app.services.document_service import extract_text
 from app.services.storage_service import save_file, delete_file
 
