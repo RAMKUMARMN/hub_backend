@@ -119,15 +119,20 @@ async def describe_image(base64_image: str) -> str:
     Uses keep_alive="10s" to release VRAM quickly.
     """
     prompt = (
-        "Analyze this academic image in extreme detail. Follow this structure:\n"
-        "1. Header/Title: Extract any visible titles or headers.\n"
-        "2. Full OCR Transcription: Transcribe all text, numbers, formulas, labels, and legends exactly as they appear.\n"
-        "3. Visual Representation: Explain the structure of diagrams, flowcharts, graphs, or drawings. Detail the flow of nodes (e.g., 'Node A points to Node B').\n"
-        "4. Data Extraction: If there is a table or chart, list the key data points, axes labels, and trend lines.\n"
-        "Be exhaustive. Do not summarize or skip details."
+        "Provide a structured description of this image. Follow these guidelines based on the image type:\n\n"
+        "- If the image contains a complex diagram, flowchart, graph, architecture, or map:\n"
+        "  Provide a highly detailed analysis. Explain the visual layout, nodes, connections (e.g., 'A points to B'), "
+        "  data points, axes, legends, and transcribe all labels and numbers exactly as they appear.\n"
+        "- Otherwise (e.g., standard photos, drawings, text documents, or simple illustrations):\n"
+        "  Provide a detailed summary and extract the key details and text, keeping the explanation clean and concise.\n\n"
+        "Your response should follow this structure:\n"
+        "1. Summary: A clear overview of what the image represents.\n"
+        "2. Visual Layout & Details: Describe the diagrams, layout, or visual elements (if applicable).\n"
+        "3. Text & Data Extraction: Transcribe visible titles, headers, labels, and key text exactly as they appear.\n\n"
+        "Ensure the description is structured and under 1000 words in total."
     )
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         try:
             response = await client.post(
                 f"{settings.ollama_base_url}/api/generate",
@@ -136,6 +141,7 @@ async def describe_image(base64_image: str) -> str:
                     "prompt": prompt,
                     "images": [base64_image],
                     "stream": False,
+                    "think": False,
                     "options": {
                         "num_ctx": 4096,
                     },
@@ -143,7 +149,11 @@ async def describe_image(base64_image: str) -> str:
                 }
             )
             response.raise_for_status()
-            return response.json().get("response", "").strip()
+            res_data = response.json()
+            desc = res_data.get("response", "").strip()
+            if not desc:
+                desc = res_data.get("thinking", "").strip()
+            return desc
         except Exception as exc:
             logger.error(
                 "Ollama vision inference failed using model %s: %s",
@@ -157,6 +167,7 @@ async def reinspect_page(pdf_path: str, page_number: int, specific_question: str
     Open the original PDF, render page_number in-memory, compress it,
     and ask qwen3-vl:2b for the specific visual details.
     """
+    print(f"\n[Vision AI] Re-inspecting page {page_number} of PDF '{pdf_path}' for question: '{specific_question}'...")
     try:
         doc = fitz.open(pdf_path)
         # page_number is 1-indexed
@@ -175,7 +186,7 @@ async def reinspect_page(pdf_path: str, page_number: int, specific_question: str
             f"charts, tables, or equations: {specific_question}"
         )
 
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             response = await client.post(
                 f"{settings.ollama_base_url}/api/generate",
                 json={
@@ -183,6 +194,7 @@ async def reinspect_page(pdf_path: str, page_number: int, specific_question: str
                     "prompt": prompt,
                     "images": [b64_str],
                     "stream": False,
+                    "think": False,
                     "options": {
                         "num_ctx": 4096,
                     },
@@ -190,8 +202,14 @@ async def reinspect_page(pdf_path: str, page_number: int, specific_question: str
                 }
             )
             response.raise_for_status()
-            return response.json().get("response", "").strip()
+            res_data = response.json()
+            desc = res_data.get("response", "").strip()
+            if not desc:
+                desc = res_data.get("thinking", "").strip()
+            print(f"[Vision AI] Page {page_number} re-inspected successfully!")
+            return desc
     except Exception as exc:
+        print(f"[Vision AI] Failed to reinspect page {page_number}: {exc}")
         logger.error(
             "Failed to reinspect PDF page %d for document %s: %s",
             page_number, pdf_path, exc

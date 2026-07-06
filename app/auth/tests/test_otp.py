@@ -371,3 +371,72 @@ async def test_reset_password_expired_token(client):
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.json()["detail"] == "Invalid or expired password reset link"
+
+
+@pytest.mark.asyncio
+async def test_non_institutional_email_requires_admin_approval(client):
+    """Verify that registering with a non-institutional email requires admin approval.
+    
+    1. Register with a non-institutional email (e.g. user@gmail.com).
+    2. Retrieve OTP and verify it.
+    3. Verify that user status is 'pending' and is_active is True.
+    4. Attempt login, verify it fails with 403 Forbidden.
+    5. Admin approves the user.
+    6. Attempt login, verify it succeeds.
+    """
+    non_inst_email = "external_user@gmail.com"
+    non_inst_password = "password123"
+    non_inst_name = "External User"
+
+    # 1. Register user
+    reg_resp = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": non_inst_email,
+            "password": non_inst_password,
+            "full_name": non_inst_name,
+        },
+    )
+    assert reg_resp.status_code == status.HTTP_201_CREATED
+
+    async with AsyncSessionLocal() as session:
+        user = (await session.execute(select(User).where(User.email == non_inst_email))).scalar_one()
+        assert user.is_active is False
+        assert user.status == "pending"
+
+    # 2. Verify OTP
+    code = await redis_client.get(f"otp:verify_email:{str(user.id)}")
+    assert code is not None
+
+    verify_resp = await client.post(
+        "/api/v1/auth/verify-otp",
+        json={"email": non_inst_email, "otp": code},
+    )
+    assert verify_resp.status_code == status.HTTP_200_OK
+
+    # 3. Check status is still pending after OTP verification
+    async with AsyncSessionLocal() as session:
+        user_db = (await session.execute(select(User).where(User.email == non_inst_email))).scalar_one()
+        assert user_db.is_active is True
+        assert user_db.status == "pending"
+
+    # 4. Attempt login, must fail with 403 Forbidden
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"email": non_inst_email, "password": non_inst_password},
+    )
+    assert login_resp.status_code == status.HTTP_403_FORBIDDEN
+    assert login_resp.json()["detail"] == "Account pending admin approval"
+
+    # 5. Admin approves the user
+    async with AsyncSessionLocal() as session:
+        from app.auth.repositories.user_repository import UserRepository
+        await UserRepository(session).approve_user(user.id)
+
+    # 6. Attempt login, must succeed now
+    login_resp_approved = await client.post(
+        "/api/v1/auth/login",
+        json={"email": non_inst_email, "password": non_inst_password},
+    )
+    assert login_resp_approved.status_code == status.HTTP_200_OK
+    assert "access_token" in login_resp_approved.json()

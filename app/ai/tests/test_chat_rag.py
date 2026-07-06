@@ -758,7 +758,7 @@ async def test_chat_rag_passes_hybrid_retrieval_mode(authenticated_client):
                 ]
             )
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "Hybrid answer"
 
     fake_ai = FakeAIClient()
@@ -841,7 +841,7 @@ async def test_chat_get_stream_passes_hyde_toggle(authenticated_client):
                 ]
             )
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "GET HyDE answer"
 
     fake_ai = FakeAIClient()
@@ -999,10 +999,10 @@ async def test_automatic_session_image_recall(authenticated_client):
             # Standard search returns empty/unrelated
             return []
 
-        async def chat_stream(self, messages):
+        async def chat_stream(self, messages, think=True):
             yield "Response"
 
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             return {"role": "assistant", "content": "Response"}
 
     fake_ai = FakeAIClient()
@@ -1094,7 +1094,7 @@ async def test_agentic_reinspection_fallback(authenticated_client):
             ])
             self.calls = 0
 
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             self.calls += 1
             if self.calls == 1:
                 return {
@@ -1172,3 +1172,158 @@ async def test_agentic_reinspection_fallback(authenticated_client):
 
         finally:
             app.dependency_overrides.pop(get_ai_client, None)
+
+
+@pytest.mark.asyncio
+async def test_non_rag_document_context_injection(authenticated_client):
+    # 1. Create session
+    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Non-RAG Session"})
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    # 2. Insert a document belonging to the active session and mark as processed
+    async with AsyncSessionLocal() as db_session:
+        from sqlalchemy import select
+        from app.models.document import Document
+        from app.models.user import User
+        user_result = await db_session.execute(select(User).limit(1))
+        user = user_result.scalar_one()
+
+        doc = Document(
+            user_id=user.id,
+            session_id=session_id,
+            filename="lecture_notes.txt",
+            file_type="txt",
+            file_size=100,
+            storage_path="documents/lecture_notes.txt",
+            version=1,
+            processed=True,
+        )
+        db_session.add(doc)
+        await db_session.commit()
+        await db_session.refresh(doc)
+        doc_id = doc.id
+
+    # 3. Setup Fake AI Client to capture arguments
+    captured_messages = []
+    class FakeAIClient:
+        async def extract_text(self, path, file_type):
+            return "This is the full text of the lecture notes document."
+
+        async def chat_stream(self, messages, think=True):
+            nonlocal captured_messages
+            captured_messages = messages
+            yield "Response to lecture notes query."
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    try:
+        response = await authenticated_client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={
+                "content": "Summarize my lecture notes.",
+                "use_rag": False,
+                "document_ids": [str(doc_id)],
+            },
+        )
+        assert response.status_code == 200
+
+        # Read the event stream
+        events = []
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                events.append(json.loads(data_str))
+
+        assert len(events) > 0
+        assert "".join(e.get("delta", "") for e in events) == "Response to lecture notes query."
+
+        # Verify the captured prompt contains the extracted document text
+        system_instruction_msg = [m for m in captured_messages if m["role"] == "system"]
+        assert len(system_instruction_msg) > 0
+        system_content = system_instruction_msg[0]["content"]
+        assert "This is the full text of the lecture notes document." in system_content
+        assert "--- DOCUMENT CONTEXT ---" in system_content
+
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+
+
+@pytest.mark.asyncio
+async def test_agent_mode_tool_routing(authenticated_client):
+    # 1. Create session
+    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Agent Session"})
+    assert session_resp.status_code == status.HTTP_201_CREATED
+    session_id = uuid.UUID(session_resp.json()["id"])
+
+    # 2. Setup Fake AI Client to trigger a tool call first, then return text on second turn
+    captured_messages = []
+    turns = 0
+
+    class FakeAIClient:
+        async def chat_with_tools(self, messages, tools, think=True):
+            nonlocal captured_messages, turns
+            captured_messages = messages
+            turns += 1
+            if turns == 1:
+                # Return a mock tool call requesting list_session_documents
+                return {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call_list_docs",
+                            "type": "function",
+                            "function": {
+                                "name": "list_session_documents",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            else:
+                # Return standard assistant text response
+                return {
+                    "role": "assistant",
+                    "content": "I see you have no documents in this session."
+                }
+
+        async def chat_stream(self, messages, think=True):
+            yield "Streamed response."
+
+    fake_ai = FakeAIClient()
+    app.dependency_overrides[get_ai_client] = lambda: fake_ai
+
+    try:
+        response = await authenticated_client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={
+                "content": "List my documents please.",
+                "agent_mode": True
+            },
+        )
+        assert response.status_code == 200
+
+        # Read the event stream
+        events = []
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                events.append(json.loads(data_str))
+
+        assert len(events) > 0
+        # The first event in tool loop streams intermediate thinking or tool actions
+        # Turn 2 should stream the final answer
+        # Verify the captured messages contains the tool response message!
+        tool_msgs = [m for m in captured_messages if m["role"] == "tool"]
+        assert len(tool_msgs) > 0
+        assert tool_msgs[0]["tool_call_id"] == "call_list_docs"
+        assert "No documents have been uploaded" in tool_msgs[0]["content"]
+
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
+

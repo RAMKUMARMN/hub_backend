@@ -68,9 +68,16 @@ app.add_middleware(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000",  # Next.js dev (default)
-        "http://localhost:3003",  # Next.js dev (CixioHub port)
-        "http://localhost:8080",  # Flutter web dev
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:8080",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:3002",
+        "http://127.0.0.1:3003",
+        "http://127.0.0.1:8080",
     ],
     allow_credentials=True,
     allow_methods=["*"],

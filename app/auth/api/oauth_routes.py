@@ -33,12 +33,6 @@ async def google_login(request: Request):
         redirect_uri
     )
 
-    print("REDIRECT URI =", redirect_uri)
-
-    return await oauth.google.authorize_redirect(
-        request,
-        redirect_uri
-    )
 
 @router.get("/google/callback")
 async def google_callback(
@@ -90,23 +84,105 @@ async def google_token_login(
     if not user:
         # First-time Google user — register them automatically
         random_pass = secrets.token_urlsafe(32)
+        is_active = True
+        status_val = "active" if email.endswith("@tkmce.ac.in") else "pending"
         user = User(
             email=email,
             full_name=full_name,
             hashed_password=hash_password(random_pass),
             avatar_url=picture,
+            is_active=is_active,
+            status=status_val,
         )
         db.add(user)
         await db.commit()
         await db.refresh(user)
-    elif picture and not user.avatar_url:
-        # Update avatar from Google if they don't have one yet
-        user.avatar_url = picture
-        await db.commit()
-        await db.refresh(user)
+    else:
+        # Update name and avatar from Google if they differ or were set to defaults
+        updated = False
+        if full_name and (user.full_name == "string" or not user.full_name):
+            user.full_name = full_name
+            updated = True
+        if picture and (not user.avatar_url or user.avatar_url != picture):
+            user.avatar_url = picture
+            updated = True
+        if updated:
+            await db.commit()
+            await db.refresh(user)
 
-    token_data = {"sub": str(user.id), "email": user.email, "is_admin": user.is_admin}
-    return TokenResponse(
-        access_token=create_access_token(token_data),
-        refresh_token=create_refresh_token(token_data),
-    )
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending admin approval",
+        )
+    elif user.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account suspended",
+        )
+
+    from app.auth.services.token_service import TokenService
+    return await TokenService.issue_pair(user, db)
+
+
+from pydantic import BaseModel, EmailStr
+
+class GoogleLoginMobileRequest(BaseModel):
+    email: EmailStr
+    name: str
+    google_id: str
+
+@router.post("/google-login")
+async def google_login_mobile(
+    body: GoogleLoginMobileRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    from app.auth.repositories.user_repository import UserRepository
+    from app.auth.services.token_service import TokenService
+    from fastapi import HTTPException, status
+    
+    user_repo = UserRepository(db)
+    user = await user_repo.get_by_email(body.email)
+    
+    if not user:
+        is_active = True
+        status_val = "active" if body.email.endswith("@tkmce.ac.in") else "pending"
+        user = await user_repo.create(
+            email=body.email,
+            full_name=body.name,
+            hashed_password=hash_password("oauth-user"),
+            phone=None,
+            is_active=is_active,
+            status=status_val,
+        )
+        
+    if user.status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account pending admin approval",
+        )
+    elif user.status == "suspended":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account suspended",
+        )
+        
+    tokens = await TokenService.issue_pair(user, db)
+    
+    return {
+        "access_token": tokens.access_token,
+        "refresh_token": tokens.refresh_token,
+        "user": {
+            "id": str(user.id),
+            "name": user.full_name,
+            "email": user.email,
+        }
+    }
+
+
+@router.get("/config")
+async def get_auth_config():
+    from app.config import settings
+    return {
+        "google_client_id": settings.google_client_id
+    }

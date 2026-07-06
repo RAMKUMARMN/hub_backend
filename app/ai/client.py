@@ -13,6 +13,7 @@ class AIClient(Protocol):
     async def chat_stream(
         self,
         messages: list[dict],
+        think: bool = True,
     ) -> AsyncIterator[str]:
         """Stream chat completion tokens from LLM."""
         ...
@@ -28,6 +29,7 @@ class AIClient(Protocol):
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        think: bool = True,
     ) -> dict:
         """One-shot chat completion with support for tool/function calling."""
         ...
@@ -72,6 +74,7 @@ class AIClient(Protocol):
         session_id: uuid.UUID | None = None,
         selected_document_ids: list[uuid.UUID] | None = None,
         use_reranker: bool = False,
+        include_meta: bool = False,
     ) -> list[dict]:
         """Search relevant document chunks by query similarity."""
         ...

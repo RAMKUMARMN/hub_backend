@@ -66,12 +66,23 @@ async def extract_text(file_path: str, file_type: str) -> str:
                 pass
 
     # 3. Fallback to external AI service on port 8003
-    async with httpx.AsyncClient(
-        base_url=settings.ai_service_url, timeout=120
-    ) as client:
-        response = await client.post(
-            "/api/v1/extract",
-            json={"file_path": file_path, "file_type": file_type},
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.ai_service_url, timeout=120
+        ) as client:
+            response = await client.post(
+                "/api/v1/extract",
+                json={"file_path": file_path, "file_type": file_type},
+            )
+            response.raise_for_status()
+            return response.json()["text"]
+    except Exception as exc:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "External AI service extraction failed for %s (type %s). Fallback to empty text. Error: %s",
+            file_path,
+            file_type,
+            exc,
         )
-        response.raise_for_status()
-        return response.json()["text"]
+        return ""

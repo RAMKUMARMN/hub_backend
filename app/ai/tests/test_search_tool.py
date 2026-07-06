@@ -105,7 +105,7 @@ async def test_unified_search_fallback():
         
         result = await unified_web_search("fallback test")
         assert result == "DuckDuckGo: Result Found"
-        mock_ddg.assert_called_once_with("fallback test", max_results=3)
+        mock_ddg.assert_called_once_with("fallback test", max_results=5)
 
 # ── End-to-end Chat integration test ──
 
@@ -127,7 +127,7 @@ async def test_chat_triggers_web_search_tool(authenticated_client):
         def __init__(self):
             self.calls = 0
             
-        async def chat_with_tools(self, messages, tools=None):
+        async def chat_with_tools(self, messages, tools=None, think=True):
             self.calls += 1
             if self.calls == 1:
                 return {
@@ -188,7 +188,7 @@ async def test_chat_triggers_web_search_tool(authenticated_client):
             full_text = "".join(ev.get("delta", "") for ev in events if "delta" in ev)
             assert "$3000" in full_text
             
-            mock_search.assert_called_once_with("Ethereum price today")
+            mock_search.assert_called_once_with("Ethereum price today", max_results=5)
             assert fake_ai.calls == 2
             
         finally:

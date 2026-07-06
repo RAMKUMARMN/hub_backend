@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 async def chat_stream(
     messages: list[dict],
+    think: bool = True,
 ) -> AsyncIterator[str]:
     """
     Stream tokens from the local Ollama /api/chat endpoint.
@@ -31,7 +32,7 @@ async def chat_stream(
 
     Raises httpx.ConnectError if Ollama is not reachable.
     """
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         async with client.stream(
             "POST",
             f"{settings.ollama_base_url}/api/chat",
@@ -39,10 +40,12 @@ async def chat_stream(
                 "model": settings.ollama_model,
                 "messages": messages,
                 "stream": True,
+                "think": think,
                 "options": {
                     "num_ctx": 16384,
-                    "num_predict": 8192,
+                    "num_predict": -1,
                 },
+                "keep_alive": "5m",
             },
         ) as response:
             response.raise_for_status()
@@ -109,6 +112,7 @@ async def get_embedding(text: str) -> list[float]:
 async def chat_with_tools(
     messages: list[dict],
     tools: list[dict] | None = None,
+    think: bool = True,
 ) -> dict:
     """
     One-shot chat completion with Ollama supporting tool/function calling.
@@ -118,15 +122,17 @@ async def chat_with_tools(
         "model": settings.ollama_model,
         "messages": messages,
         "stream": False,
+        "think": think,
         "options": {
             "num_ctx": 16384,
-            "num_predict": 8192,
+            "num_predict": -1,
         },
+        "keep_alive": "5m",
     }
     if tools:
         payload["tools"] = tools
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=300) as client:
         try:
             response = await client.post(
                 f"{settings.ollama_base_url}/api/chat",

@@ -46,6 +46,7 @@ async def upload_document(
     file: UploadFile,
     background_tasks: BackgroundTasks,
     session_id: uuid.UUID | None = None,
+    use_rag: bool = True,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     ai_client: AIClient = Depends(get_ai_client),
@@ -113,9 +114,9 @@ async def upload_document(
     await db.commit()
     await db.refresh(doc)
 
-    # Fire-and-forget: extract text, embed, and store in Qdrant.
+    # Fire-and-forget: extract text, embed, and store in Qdrant (if use_rag is True).
     background_tasks.add_task(
-        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client
+        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client, use_rag
     )
 
     return doc
@@ -128,6 +129,7 @@ async def _process_document(
     filename: str,
     session_id: uuid.UUID | None = None,
     ai_client: AIClient | None = None,
+    use_rag: bool = True,
 ) -> None:
     """
     Background task: extract plain text from the uploaded file and ingest it
@@ -149,27 +151,45 @@ async def _process_document(
             if not doc:
                 return
 
+            print(f"\n[Ingestion] >>> Starting processing for file: '{filename}' (ID: {document_id})")
+            print(f"[Ingestion] Extracting text content from '{filename}' ({doc.file_type})...")
             text = await ai_client.extract_text(storage_path, doc.file_type)
 
-            if not text.strip():
+            if not use_rag:
+                print(f"[Ingestion] Direct LLM mode: skipping Qdrant indexing for '{filename}'")
+                logger.info(
+                    "Document %s: Skipping vector indexing (Direct LLM mode).", document_id
+                )
+            elif not text.strip():
+                print(f"[Ingestion] Warning: Extracted text is empty for '{filename}'")
                 logger.warning(
                     "Document %s produced empty text — skipping vector storage.", document_id
                 )
             else:
                 # Chunk, embed, and store in Qdrant (multi-tenant, keyed by user_id).
-                chunks_stored = await ai_client.store_document_vectors(
-                    user_id=user_id,
-                    document_id=document_id,
-                    text=text,
-                    filename=filename,
-                    session_id=session_id,
-                )
-                logger.info(
-                    "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
-                )
+                print(f"[Ingestion] Chunking, embedding, and storing text for '{filename}'...")
+                try:
+                    chunks_stored = await ai_client.store_document_vectors(
+                        user_id=user_id,
+                        document_id=document_id,
+                        text=text,
+                        filename=filename,
+                        session_id=session_id,
+                    )
+                    print(f"[Ingestion] Successfully stored {chunks_stored} text chunks in Qdrant.")
+                    logger.info(
+                        "Document %s: %d chunks stored in Qdrant.", document_id, chunks_stored
+                    )
+                except Exception as qdrant_exc:
+                    print(f"[Ingestion] Qdrant storage failed or skipped: {qdrant_exc}")
+                    logger.warning(
+                        "Qdrant storage failed for document %s: %s. Continuing processing.",
+                        document_id,
+                        qdrant_exc,
+                    )
 
             # Vision RAG processing for images/PDFs
-            if settings.enable_vision_rag:
+            if use_rag and settings.enable_vision_rag:
                 try:
                     import base64
                     import httpx
@@ -211,6 +231,7 @@ async def _process_document(
                         os.unlink(temp_file_path)
 
                     if visuals:
+                        print(f"[Ingestion] Document '{filename}' contains visual elements. Starting Vision RAG pipeline...")
                         images_stored = await ai_client.store_image_vectors(
                             user_id=user_id,
                             document_id=document_id,
@@ -218,12 +239,14 @@ async def _process_document(
                             image_metadata=visuals,
                             session_id=session_id,
                         )
+                        print(f"[Ingestion] Successfully processed and stored visual description for '{filename}' ({images_stored} pages).")
                         logger.info(
                             "Document %s: %d image descriptions stored in Qdrant.",
                             document_id,
                             images_stored,
                         )
                 except Exception as vision_exc:
+                    print(f"[Ingestion] Vision processing failed for document '{filename}': {vision_exc}")
                     logger.error(
                         "Vision processing failed for document %s: %s",
                         document_id,
@@ -234,6 +257,7 @@ async def _process_document(
             # Mark the document as ready for RAG queries.
             doc.processed = True
             await db.commit()
+            print(f"[Ingestion] <<< Finished processing for file: '{filename}' (ID: {document_id})\n")
 
         except Exception as exc:
             logger.error(
@@ -252,6 +276,43 @@ async def list_documents(
         .order_by(Document.created_at.desc())
     )
     return result.scalars().all()
+
+
+@router.get("/{document_id}/download")
+async def download_document(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download or stream the file content.
+    For Cloudinary, redirects to the secure URL.
+    For local files, returns a FileResponse.
+    """
+    import os
+    from fastapi.responses import FileResponse, RedirectResponse
+
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id, Document.user_id == current_user.id
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.storage_path.startswith("http://") or doc.storage_path.startswith("https://"):
+        return RedirectResponse(doc.storage_path)
+
+    file_path = os.path.join("uploads", doc.storage_path)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(
+        path=file_path,
+        filename=doc.filename,
+        media_type="application/octet-stream"
+    )
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
