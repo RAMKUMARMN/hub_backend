@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # AI Service — handles LLM, RAG, document extraction
     ai_service_url: str = "http://localhost:8003"
+    n8n_webhook_url: str = "http://localhost:5678/webhook/document-summary"
 
     # ChromaDB
     chroma_host: str = "localhost"
