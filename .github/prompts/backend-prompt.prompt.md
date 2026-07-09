@@ -13,6 +13,6 @@ This coordinator does NOT implement tasks directly. It identifies the task type 
 | Create/update SQLAlchemy models or Alembic migrations | `backend-database` | `backend-database-prompt.prompt.md` |
 | Set up service logic or external integrations | `backend-integrations` | `backend-integrations-prompt.prompt.md` |
 | Generate an implementation plan | `backend-planner` | `backend-planner-prompt.prompt.md` |
-| Review code before merge | `backend-code-reviewer` | `backend-code-reviewer-prompt.prompt.md` |
+
 
 If the request spans multiple domains, ask the user to break it into single-task prompts.

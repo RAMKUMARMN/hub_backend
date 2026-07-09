@@ -12,7 +12,7 @@ Single task: Generate a structured, step-by-step implementation plan for backend
 
 - Planning new API endpoints (route structure, schemas, service layer, tests)
 - Planning database model changes (model updates, migration strategy, rollback)
-- Planning service integrations (RabbitMQ queues, Redis caching, LLM pipelines)
+- Planning service integrations (LLM proxy, RAG proxy, local storage)
 - Planning refactoring (service extraction, migration consolidation, test improvements)
 - Identifying risks, dependencies, and validation steps
 
@@ -20,7 +20,6 @@ Single task: Generate a structured, step-by-step implementation plan for backend
 
 This agent does NOT:
 - Implement code — hands off to `backend-routers`, `backend-database`, or `backend-integrations`
-- Review existing code — use `backend-code-reviewer`
 - Execute database migrations or modify source files
 
 ## Inputs
@@ -38,5 +37,5 @@ This agent does NOT:
 
 ## Example prompts
 
-- "Plan the implementation of a notification system: a `notifications` table, a `POST /api/v1/notifications` endpoint, and a RabbitMQ consumer that sends email/SMS."
+- "Plan the implementation of a todo tagging system: a `tags` table, a `todo_tags` association table, `GET /api/v1/todos?tag=name` filter, and a `POST /api/v1/todos/{id}/tags` endpoint."
 - "Plan the migration of the chat service from polling-based to WebSocket-based real-time messaging."

@@ -1,6 +1,6 @@
 ---
 name: backend-integrations
-description: "Single-task agent for service layer business logic and external integrations: RabbitMQ, Redis, Ollama, ChromaDB, MinIO/S3. Does NOT handle API endpoints or database models."
+description: "Single-task agent for service layer business logic: LLM proxy, RAG proxy, local file storage, JWT auth, document proxy. Does NOT handle API endpoints or database models."
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
 
@@ -11,11 +11,11 @@ Single task: Create or update service layer business logic and external service 
 ## Scope
 
 - `app/services/` — business logic functions called by route handlers
-- `app/services/llm_service.py` — Ollama LLM calls
-- `app/services/rag_service.py` — ChromaDB vector search
-- `app/services/storage_service.py` — MinIO/S3 file storage
-- `app/services/queue_service.py` — RabbitMQ publish/consume via aio-pika
-- `app/services/cache_service.py` — Redis caching
+- `app/services/auth_service.py` — JWT issue/verify, password hashing
+- `app/services/llm_service.py` — AI service proxy for chat streaming and embeddings
+- `app/services/rag_service.py` — AI service proxy for RAG ingest/retrieve/delete (AI service wraps ChromaDB)
+- `app/services/document_service.py` — AI service proxy for text extraction (PDF, DOCX, image)
+- `app/services/storage_service.py` — local filesystem storage (S3 via USE_S3=true)
 - Background task workers and event handlers
 
 ## Out of scope
@@ -23,24 +23,22 @@ Single task: Create or update service layer business logic and external service 
 This agent does NOT handle:
 - FastAPI endpoint handlers → use `backend-routers`
 - SQLAlchemy models or Alembic migrations → use `backend-database`
-- Planning or review → use `backend-planner` or `backend-code-reviewer`
+- Planning or review → use `backend-planner`
 
 ## Inputs
 
-- `integration_type` — which service to configure (RabbitMQ, Redis, Ollama, ChromaDB, MinIO)
-- `service_name` — the service function to create or modify (e.g., `send_notification`, `embed_document`)
-- `endpoint` — connection details (URL, queue name, collection name)
-- `error_handling` — retry, fallback, circuit breaker requirements
+- `integration_type` — which service to configure (llm, rag, storage, auth, document)
+- `service_name` — the service function to create or modify (e.g., `embed_document`, `upload_file`)
+- `endpoint` — connection details (AI service URL, upload path)
 
 ## Outputs
 
 - New or updated service module in `app/services/`
 - Integration tests for the service
 - Configuration updates (e.g., connection settings, env vars)
-- Docker Compose additions for the service
 
 ## Example prompts
 
-- "Create a background worker that consumes messages from the `notifications` queue and sends them via the email channel."
-- "Add an Ollama integration that accepts a prompt and returns a generated response. Use the existing service pattern."
-- "Set up a Redis caching layer for the workspace list endpoint with a 5-minute TTL."
+- "Add a streaming chat method to the LLM service that sends a prompt to the AI service and returns the response."
+- "Update the storage service to support file deletion from the local filesystem."
+- "Add a method to the document service that extracts text from PDF files via the AI service proxy."

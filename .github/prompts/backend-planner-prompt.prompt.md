@@ -51,12 +51,12 @@ Consider [constraints or special requirements].
 ### Chat Example
 
 ```
-User: Plan the implementation of a notification system.
-- notifications table: id, user_id, type, title, body, read_at, created_at
-- POST /api/v1/notifications (internal, admin only)
-- GET /api/v1/notifications for the authenticated user
-- RabbitMQ consumer that creates notifications from queue messages
-- Unread count in the header API
+User: Plan the implementation of a todo tagging system.
+- tag model: id, name, color
+- todo_tags association table: todo_id, tag_id
+- GET /api/v1/todos?tag=name filter
+- POST /api/v1/todos/{id}/tags
+- Service function to sync tags on todo update
 ```
 
 Agent (expected):

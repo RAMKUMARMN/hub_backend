@@ -21,24 +21,28 @@ metadata:
 tests/
 ├── conftest.py              # Shared fixtures (db session, async client, auth)
 ├── test_auth.py             # Auth endpoint tests
-├── test_workspaces.py       # Workspace endpoint tests
+├── test_todos.py            # Todo CRUD endpoint tests
 ├── test_chat.py             # Chat endpoint tests
+├── test_documents.py        # Document upload endpoint tests
+├── test_poll.py             # Poll endpoint tests
+├── test_admin.py            # Admin endpoint tests
 └── test_services/           # Service unit tests
-    ├── test_workspace_service.py
-    └── test_notification_service.py
+    ├── test_auth_service.py
+    └── test_llm_service.py
 ```
 
 ## Fixtures (`conftest.py`)
 
 ```python
+import uuid
+
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_session
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.database import Base
+from app.database import Base, get_db
 from app.main import app
-from app.dependencies import get_db
 
 
 @pytest_asyncio.fixture
@@ -47,11 +51,13 @@ async def db_session():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async with async_session(engine) as session:
+    TestSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+    async with TestSessionLocal() as session:
         yield session
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
 
 
 @pytest_asyncio.fixture
@@ -63,11 +69,11 @@ async def async_client(db_session: AsyncSession):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+    app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
 async def auth_headers(async_client: AsyncClient) -> dict:
-    # Register user and get token
     response = await async_client.post(
         "/api/v1/auth/register",
         json={"email": "test@example.com", "password": "TestPass123!"},
@@ -79,57 +85,50 @@ async def auth_headers(async_client: AsyncClient) -> dict:
 ## Endpoint Tests
 
 ```python
-# tests/test_workspaces.py
+# tests/test_todos.py
 import pytest
 from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_create_workspace(async_client: AsyncClient, auth_headers: dict):
+async def test_create_todo(async_client: AsyncClient, auth_headers: dict):
     response = await async_client.post(
-        "/api/v1/workspaces",
-        json={"name": "My Workspace", "description": "Test"},
+        "/api/v1/todos",
+        json={"title": "Buy groceries", "description": "Milk, eggs, bread"},
         headers=auth_headers,
     )
     assert response.status_code == 201
     data = response.json()
-    assert data["name"] == "My Workspace"
+    assert data["title"] == "Buy groceries"
     assert "id" in data
 
 
 @pytest.mark.asyncio
-async def test_list_workspaces(async_client: AsyncClient, auth_headers: dict):
-    response = await async_client.get("/api/v1/workspaces", headers=auth_headers)
+async def test_list_todos(async_client: AsyncClient, auth_headers: dict):
+    response = await async_client.get("/api/v1/todos", headers=auth_headers)
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 
 
 @pytest.mark.asyncio
 async def test_unauthorized_returns_401(async_client: AsyncClient):
-    response = await async_client.get("/api/v1/workspaces")
+    response = await async_client.get("/api/v1/todos")
     assert response.status_code == 401
 ```
 
 ## Service Tests
 
 ```python
-# tests/test_services/test_workspace_service.py
+# tests/test_services/test_auth_service.py
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.workspace import Workspace
-from app.services import workspace_service
+from app.services.auth_service import hash_password, verify_password
 
 
-@pytest.mark.asyncio
-async def test_create_workspace_service(db_session: AsyncSession):
-    workspace = await workspace_service.create_workspace(
-        db_session,
-        {"name": "Test", "description": None},
-        "user-id-123",
-    )
-    assert workspace.name == "Test"
-    assert workspace.owner_id == "user-id-123"
+def test_hash_and_verify_password():
+    hashed = hash_password("MySecret123!")
+    assert verify_password("MySecret123!", hashed) is True
+    assert verify_password("WrongPassword", hashed) is False
 ```
 
 ## Running Tests
@@ -142,7 +141,7 @@ pytest -q
 pytest -v
 
 # Run specific test file
-pytest tests/test_workspaces.py -q
+pytest tests/test_todos.py -q
 
 # Run with coverage
 pytest --cov=app --cov-report=term-missing

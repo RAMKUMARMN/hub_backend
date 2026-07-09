@@ -1,6 +1,6 @@
 ---
 name: backend-agent-skills
-description: Skills for the `hub_backend` assistant: FastAPI endpoints, SQLAlchemy models and Alembic migrations, service integrations (RabbitMQ, Redis, Ollama, ChromaDB, MinIO), and safe backend maintenance. The coordinator routes requests to single-task agents.
+description: Skills for the `hub_backend` assistant: FastAPI endpoints, SQLAlchemy models and Alembic migrations, service integrations (AI service proxy for LLM/RAG/document, local file storage), and safe backend maintenance. The coordinator routes requests to single-task agents.
 ---
 
 # Backend Agent — Skills Catalog
@@ -11,7 +11,7 @@ This document describes the skills, inputs/outputs, tools, safety constraints, a
 - Provide a compact, discoverable list of the agent's actionable capabilities so maintainers can quickly know what to ask and what to expect.
 
 **Quick summary**
-- **Primary domain:** FastAPI backend API (REST endpoints, SQLAlchemy models, Alembic migrations, RabbitMQ, Redis, Ollama, ChromaDB, MinIO).
+- **Primary domain:** FastAPI backend API (REST endpoints, SQLAlchemy models, Alembic migrations, AI service proxy for LLM/RAG/document, local file storage).
 - **Primary outputs:** repository patches/diffs, new router files, Pydantic schemas, SQLAlchemy models, Alembic migrations, service modules, CI workflow files, and PR-ready descriptions.
 - **Primary safety posture:** Prepare and validate code changes; never autonomously run database migrations or modify production data without explicit maintainer confirmation.
 
@@ -24,19 +24,25 @@ This document describes the skills, inputs/outputs, tools, safety constraints, a
 - Authentication dependencies and error handling
 - httpx endpoint tests
 
+### Breaking Change Detection (handled by `backend-master-api-reviewer` agent)
+- Cross-reference schema/route changes against hub_mobile Dart models and hub_frontend TypeScript types
+- Detect field removals, renames, type changes, and optionality shifts
+- Flag `CRITICAL: BREAKING CHANGE` with client-side mock update snippets
+
 ### Database Models & Migrations (handled by `backend-database` agent)
 - Create or update SQLAlchemy 2.0 async models
 - Alembic migration generation and review
 - Model relationships, indexes, constraints
 - Matching Pydantic schemas (Create, Read, Update, List)
+- **Database performance scanning** — N+1 detection, index analysis, migration impact review
 
 ### Service Integrations (handled by `backend-integrations` agent)
 - Service layer business logic in `app/services/`
-- RabbitMQ queue publish/consume (aio-pika)
-- Redis caching
-- Ollama LLM integration
-- ChromaDB vector search
-- MinIO/S3 file storage
+- Auth service: JWT issue/verify, password hashing (`auth_service.py`)
+- LLM: AI service proxy for chat streaming and embeddings (`llm_service.py`)
+- RAG: AI service proxy for ingest/retrieve/delete (AI service wraps ChromaDB) (`rag_service.py`)
+- File storage: local filesystem (`storage_service.py`; S3 via `USE_S3=true`)
+- Document processing: AI service proxy for PDF, DOCX, image parsing (`document_service.py`)
 
 ### Infrastructure Skills (reusable guides in `.agents/skills/`)
 - `fastapi-endpoint-setup` — FastAPI endpoint creation with schemas and tests
@@ -48,7 +54,7 @@ This document describes the skills, inputs/outputs, tools, safety constraints, a
 ## Inputs the agent expects (ask if missing)
 - `domain` — feature domain for the endpoint (e.g., `workspaces`, `chat`)
 - `model_name` — the SQLAlchemy model to create or modify
-- `integration_type` — which external service to configure (RabbitMQ, Redis, Ollama, etc.)
+- `integration_type` — which service to configure (llm, rag, storage, auth, document)
 - `migration_message` — descriptive message for the Alembic revision
 
 ## Outputs the agent produces
@@ -88,20 +94,29 @@ This document describes the skills, inputs/outputs, tools, safety constraints, a
 - "Add an `avatar_url` column to the user model and generate a migration."
 
 ### Service Integrations
-- "Create a notification service that publishes to the `notifications` RabbitMQ queue."
-- "Add a Redis caching layer for the workspace list with a 5-minute TTL."
+- "Add a streaming chat method to the LLM service that sends a prompt to the AI service."
+- "Set up local file storage for document uploads."
+- "Add a document parsing method that extracts text from PDFs via the AI service proxy."
 
 ## Agent Architecture
 
-The coordinator (`backend-agent`) routes to single-task agents:
+The coordinator (`backend-agent`) routes to single-task agents via a **strict thin coordinator** pattern:
 
-| Agent | Responsibility |
+| Category | Agent | Responsibility | Cross-agent workflow |
+|---|---|---|---|
+| Scope/Structure | `backend-planner` | Implementation planning | — |
+| API Endpoints | `backend-routers` | FastAPI endpoints and Pydantic schemas | — |
+| Models/SQL | `backend-database` | SQLAlchemy models, Alembic migrations, **performance scans** | — |
+| External Services | `backend-integrations` | Service layer and external integrations | — |
+| Breaking Change Gatekeeper | `backend-master-api-reviewer` | Breaking change detection in routers/schemas against mobile + frontend contracts | Invoked directly or via coordinator |
+
+### Architectural Guardrails
+
+| Rule | Description |
 |---|---|
-| `backend-routers` | FastAPI endpoints and Pydantic schemas |
-| `backend-database` | SQLAlchemy models and Alembic migrations |
-| `backend-integrations` | Service layer and external integrations |
-| `backend-planner` | Implementation planning |
-| `backend-code-reviewer` | Code review before merge |
+| Thin coordinator | The coordinator NEVER implements, never holds state, never waits for results. All handoffs use `send: false`. |
+| DAG-only delegation | All agent communication flows in one direction. Circular calls (child → coordinator) are strictly forbidden. |
+| Max 2 concurrent agents | No more than two specialized agents may be active simultaneously. Queue excess requests. |
 
 ## How progress is reported
 - Each agent breaks tasks into steps and reports current/completed steps

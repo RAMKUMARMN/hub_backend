@@ -1,6 +1,6 @@
 ---
 name: backend-service-integration
-description: Set up service layer business logic and integrate with RabbitMQ, Redis, Ollama, ChromaDB, and MinIO/S3 following the project's service patterns.
+description: Set up service layer business logic in app/services/ following the project's patterns: stateless functions, proxy through AI service for LLM/RAG/document extraction, local file storage, and JWT auth.
 metadata:
   model: models/gemini-3.1-pro-preview
   last_modified: Mon, 29 Jun 2026 00:00:00 GMT
@@ -10,147 +10,161 @@ metadata:
 
 ## Contents
 - [Service Pattern](#service-pattern)
-- [RabbitMQ](#rabbitmq)
-- [Redis](#redis)
-- [Ollama](#ollama)
-- [ChromaDB](#chromadb)
-- [MinIO/S3](#minio-s3)
+- [Auth Service (JWT + bcrypt)](#auth-service-jwt--bcrypt)
+- [LLM Service (AI service proxy)](#llm-service-ai-service-proxy)
+- [RAG Service (AI service proxy)](#rag-service-ai-service-proxy)
+- [Document Service (AI service proxy)](#document-service-ai-service-proxy)
+- [Storage Service (local filesystem)](#storage-service-local-filesystem)
+- [AI Service Architecture](#ai-service-architecture)
 - [Verification](#verification)
 
 ## Service Pattern
 
-Services are stateless functions in `app/services/`:
+Services are stateless functions in `app/services/`. No classes, no shared mutable state:
 
 ```python
-# app/services/workspace_service.py
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+# app/services/auth_service.py — simple self-contained service
+from jose import jwt
+import bcrypt
 
-from app.models.workspace import Workspace
-from app.schemas.workspace import WorkspaceCreate
-
-
-async def get_workspaces(db: AsyncSession, user_id: str) -> list[Workspace]:
-    result = await db.execute(
-        select(Workspace).where(Workspace.owner_id == user_id)
-    )
-    return result.scalars().all()
+from app.config import settings
 
 
-async def create_workspace(
-    db: AsyncSession, data: WorkspaceCreate, user_id: str
-) -> Workspace:
-    workspace = Workspace(name=data.name, description=data.description, owner_id=user_id)
-    db.add(workspace)
-    await db.commit()
-    await db.refresh(workspace)
-    return workspace
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+def create_access_token(data: dict) -> str:
+    to_encode = data.copy()
+    to_encode.update({"exp": ..., "type": "access"})
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 ```
 
-## RabbitMQ
+## Auth Service (JWT + bcrypt)
+
+**File:** `app/services/auth_service.py`
+
+| Function | Purpose |
+|---|---|
+| `hash_password(password)` | bcrypt hash with salt |
+| `verify_password(plain, hashed)` | bcrypt verify |
+| `create_access_token(data)` | JWT with short exp, type=access |
+| `create_refresh_token(data)` | JWT with longer exp, type=refresh |
+| `decode_token(token)` | Decode + validate JWT, raises `JWTError` |
+
+## LLM Service (AI service proxy)
+
+**File:** `app/services/llm_service.py`
+
+Proxies chat streaming and embedding to the external AI service at `settings.ai_service_url`:
 
 ```python
-# app/services/queue_service.py
-import json
-from aio_pika import connect_robust, Message, DeliveryMode
+async def chat_stream(
+    messages: list[dict],
+    user_id: str,
+    context_chunks: list[str] | None = None,
+    use_rag: bool = False,
+) -> AsyncIterator[str]:
+    """Stream tokens from the AI service chat endpoint (SSE)."""
+    async with httpx.AsyncClient(base_url=settings.ai_service_url, timeout=120) as client:
+        async with client.stream("POST", "/api/v1/chat/stream", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        return
+                    yield json.loads(data).get("delta", "")
 
 
-async def publish(queue_name: str, data: dict):
-    connection = await connect_robust(settings.rabbitmq_url)
-    async with connection:
-        channel = await connection.channel()
-        await channel.declare_queue(queue_name, durable=True)
-        message = Message(
-            body=json.dumps(data).encode(),
-            delivery_mode=DeliveryMode.PERSISTENT,
-        )
-        await channel.default_exchange.publish(message, routing_key=queue_name)
+async def get_embedding(text: str) -> list[float]:
+    """Get a text embedding vector from the AI service."""
 ```
 
-## Redis
+## RAG Service (AI service proxy)
+
+**File:** `app/services/rag_service.py`
+
+Proxies vector storage/retrieval to the AI service (which wraps ChromaDB):
 
 ```python
-# app/services/cache_service.py
-import json
-from redis.asyncio import Redis
-
-redis = Redis.from_url(settings.redis_url)
+async def ingest_document(user_id, document_id, text, filename) -> int:
+    """Send extracted text for chunking, embedding, and ChromaDB storage."""
 
 
-async def cache_get(key: str) -> dict | None:
-    value = await redis.get(key)
-    return json.loads(value) if value else None
+async def retrieve_chunks(user_id, query, n_results=5) -> list[str]:
+    """Ask for top-k relevant chunks."""
 
 
-async def cache_set(key: str, value: dict, ttl: int = 300):
-    await redis.setex(key, ttl, json.dumps(value))
+async def delete_document_chunks(user_id, document_id) -> None:
+    """Remove all chunks for a document."""
 ```
 
-## Ollama
+## Document Service (AI service proxy)
+
+**File:** `app/services/document_service.py`
+
+Proxies text extraction to the AI service (which handles PDF via PyMuPDF, DOCX via python-docx, OCR via Tesseract):
 
 ```python
-# app/services/llm_service.py
-import httpx
-
-
-async def generate(prompt: str, model: str = "llama3.2:3b") -> str:
-    async with httpx.AsyncClient(timeout=60) as client:
+async def extract_text(file_path: str, file_type: str) -> str:
+    """Extract plain text from a file via the AI service."""
+    async with httpx.AsyncClient(base_url=settings.ai_service_url, timeout=120) as client:
         response = await client.post(
-            f"{settings.ollama_url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
+            "/api/v1/extract",
+            json={"file_path": file_path, "file_type": file_type},
         )
         response.raise_for_status()
-        return response.json()["response"]
+        return response.json()["text"]
 ```
 
-## ChromaDB
+## Storage Service (local filesystem)
+
+**File:** `app/services/storage_service.py`
+
+Local filesystem storage in `uploads/` directory. S3 support is planned but not yet implemented.
 
 ```python
-# app/services/rag_service.py
-import chromadb
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 
-chroma_client = chromadb.HttpClient(
-    host=settings.chromadb_host, port=settings.chromadb_port
-)
+async def save_file(file_bytes: bytes, filename: str, user_id: uuid.UUID) -> str:
+    """Save to local `uploads/{user_id}/{uuid}_{filename}`. Returns relative path."""
+    unique_name = f"{uuid.uuid4()}_{filename}"
+    user_dir = UPLOAD_DIR / str(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    dest = user_dir / unique_name
+    dest.write_bytes(file_bytes)
+    return str(dest.relative_to(UPLOAD_DIR.resolve()))
 
 
-def search_collection(collection_name: str, query: str, n: int = 5):
-    collection = chroma_client.get_or_create_collection(collection_name)
-    results = collection.query(query_texts=[query], n_results=n)
-    return results
+async def delete_file(storage_path: str) -> None:
+    """Delete from local filesystem."""
+    path = Path(storage_path)
+    if path.exists():
+        path.unlink()
 ```
 
-## MinIO/S3
+## AI Service Architecture
 
-```python
-# app/services/storage_service.py
-import boto3
-from botocore.config import Config
+Several backend services proxy to a separate **AI service** (`cixio-hub/ai`, running on port 8003). This is intentional:
 
+| Backend service | Proxies to AI service endpoint | AI service handles |
+|---|---|---|
+| `llm_service.py` | `/api/v1/chat/stream`, `/api/v1/embed` | Ollama streaming, embeddings |
+| `rag_service.py` | `/api/v1/rag/ingest`, `/api/v1/rag/retrieve`, `/api/v1/rag/documents/{id}` | ChromaDB chunking, embedding, search |
+| `document_service.py` | `/api/v1/extract` | PyMuPDF (PDF), python-docx (DOCX), Tesseract (OCR) |
 
-s3_client = boto3.client(
-    "s3",
-    endpoint_url=settings.minio_url,
-    aws_access_key_id=settings.minio_access_key,
-    aws_secret_access_key=settings.minio_secret_key,
-    config=Config(signature_version="s3v4"),
-)
-
-
-async def upload_file(bucket: str, key: str, data: bytes):
-    s3_client.put_object(Bucket=bucket, Key=key, Body=data)
-
-
-async def get_presigned_url(bucket: str, key: str, expires: int = 3600) -> str:
-    return s3_client.generate_presigned_url(
-        "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires
-    )
-```
+Config values for direct Ollama/ChromaDB connections exist in `app/config.py` but are not used by the backend — they're reserved for the AI service.
 
 ## Verification
 
-1. `python -c "from app.services.<name> import *"` — service imports
-2. `pytest tests/test_services.py -q` — service tests pass
-3. External connections are mocked in unit tests
-4. Integration tests use test containers where available
+1. `python -c "from app.services.auth_service import hash_password, verify_password"` — auth imports
+2. `python -c "from app.services.llm_service import chat_stream"` — llm imports
+3. Start the server and test endpoints that use these services
+4. External connections are mocked in unit tests

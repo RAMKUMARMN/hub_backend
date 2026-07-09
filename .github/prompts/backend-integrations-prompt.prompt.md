@@ -2,17 +2,17 @@
 mode: agent
 agent: backend-integrations
 name: backend-integrations-prompt
-description: "Prompt for the backend-integrations agent. Creates or updates service layer business logic and external service integrations: RabbitMQ, Redis, Ollama, ChromaDB, MinIO/S3."
+description: "Prompt for the backend-integrations agent. Creates or updates service layer business logic: LLM (AI service proxy), RAG (AI service proxy), local filesystem storage, JWT auth, document extraction (AI service proxy)."
 ---
 
 ### Requirements
 
-1. **Service Pattern:** Place business logic in `app/services/<domain>_service.py`. Functions accept domain objects (models, schemas) and return results. Services should be stateless.
-2. **RabbitMQ:** Use aio-pika for async publish/consume. Define queue/exchange topology in `app/services/queue_service.py`. Use `connect_robust` for resilient connections.
-3. **Redis:** Use redis-py async for caching. Use `app/services/cache_service.py` with TTL-based expiration. Prefix keys by domain.
-4. **Ollama:** Use `httpx.AsyncClient` to call Ollama API. Place in `app/services/llm_service.py`. Handle streaming responses.
-5. **ChromaDB:** Use the chromadb Python client. Place in `app/services/rag_service.py`. Support collection create/delete and vector search.
-6. **MinIO/S3:** Use boto3 async. Place in `app/services/storage_service.py`. Support upload, download, delete, presigned URLs.
+1. **Service Pattern:** Place business logic in `app/services/<domain>_service.py`. Functions accept domain objects (models, schemas) and return results. Services should be stateless (no classes).
+2. **LLM Service:** Proxies to the AI service at `settings.ai_service_url`. Use `httpx.AsyncClient` for streaming (SSE) and embedding. Place in `app/services/llm_service.py`.
+3. **RAG Service:** Proxies ingest/retrieve/delete to the AI service (which wraps ChromaDB). Place in `app/services/rag_service.py`.
+4. **Storage Service:** Local filesystem in `uploads/` directory. S3 support is planned as a TODO. Place in `app/services/storage_service.py`.
+5. **Auth Service:** JWT issue/verify (`jose`), password hashing (`bcrypt`). Place in `app/services/auth_service.py`. Google OAuth is config-only, not yet implemented.
+6. **Document Service:** Proxies text extraction to the AI service (which handles PDF via PyMuPDF, DOCX via python-docx, OCR via Tesseract). Place in `app/services/document_service.py`.
 
 ### Constraints
 
@@ -41,16 +41,20 @@ Create/update a [service_name] service for [integration_type]:
 Show the diff and wait for my confirmation before applying.
 ```
 
-### Chat Example
+### Chat Examples
 
 ```
-User: Create a notification service that publishes messages to a RabbitMQ queue.
-- Queue name: notifications
-- Exchange: direct
-- Message format: { type, recipient, channel, content }
-- Retry: 3 attempts with exponential backoff
+User: Add a streaming LLM call that sends a prompt to the AI service and returns the response. Use the existing service pattern.
 ```
 
 Agent (expected):
-- Creates app/services/notification_service.py with publish function
+- Creates or updates app/services/llm_service.py
+- Shows the diff and waits for confirmation before applying
+
+```
+User: Set up local file storage for document uploads (no S3 yet).
+```
+
+Agent (expected):
+- Creates or updates app/services/storage_service.py with upload, download, delete using local filesystem
 - Shows the diff and waits for confirmation before applying

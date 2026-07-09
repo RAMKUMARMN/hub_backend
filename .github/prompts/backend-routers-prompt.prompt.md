@@ -8,7 +8,7 @@ description: "Prompt for the backend-routers agent. Creates or updates FastAPI R
 ### Requirements
 
 1. **Route Structure:** Group endpoints in `app/routers/<domain>.py`. Prefix all routes with `/api/v1/`.
-2. **Pydantic Schemas:** Define request bodies and response models using Pydantic v2. Use `from_attributes = True` for ORM mode.
+2. **Pydantic Schemas:** Define request bodies and response models using Pydantic v2. Use `model_config = {"from_attributes": True}` for ORM mode.
 3. **Dependency Injection:** Use FastAPI dependencies for shared concerns (DB session, current user, pagination).
 4. **Error Handling:** Return appropriate HTTP status codes (200, 201, 204, 400, 401, 403, 404, 422, 500) with structured error bodies.
 5. **Authentication:** Apply JWT auth via the existing `get_current_user` dependency. Use `@router.get("/path", dependencies=[Depends(...)])` for endpoint-level auth.
@@ -44,10 +44,10 @@ Show the diff and wait for my confirmation before applying.
 ### Chat Example
 
 ```
-User: Add a GET /api/v1/workspaces endpoint returning all workspaces for the authenticated user.
-- Create router in app/routers/workspaces.py
-- Schema: WorkspaceRead with id, name, created_at
-- Service: workspace_service.get_workspaces(user_id)
+User: Add a GET /api/v1/todos endpoint returning all todos for the authenticated user.
+- Create router in app/routers/todos.py
+- Schema: TodoRead with id, title, completed, created_at
+- Service: todo_service.get_todos(user_id)
 - Test with httpx.AsyncClient
 ```
 

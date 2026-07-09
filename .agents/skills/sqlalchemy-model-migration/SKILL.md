@@ -1,6 +1,6 @@
 ---
 name: sqlalchemy-model-migration
-description: Create SQLAlchemy 2.0 async models and Alembic migrations following the project's conventions: UUID PKs, timestamps, soft deletes, and Pydantic schemas.
+description: Create SQLAlchemy 2.0 async models and Alembic migrations following the project's conventions: UUID PKs, timestamps, and Pydantic schemas.
 metadata:
   model: models/gemini-3.1-pro-preview
   last_modified: Mon, 29 Jun 2026 00:00:00 GMT
@@ -19,81 +19,112 @@ metadata:
 ## Model Template
 
 ```python
-# app/models/workspace.py
+# app/models/todo.py
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Text, ForeignKey, DateTime, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
 
 
-class Workspace(Base):
-    __tablename__ = "workspaces"
+class Todo(Base):
+    __tablename__ = "todos"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    owner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
-
-    owner = relationship("User", back_populates="workspaces")
 ```
 
 ## Relationships
 
-```python
-# One-to-many
-owner = relationship("User", back_populates="workspaces")
-
-# Many-to-many via association table
-workspace_members = Table(
-    "workspace_members",
-    Base.metadata,
-    Column("user_id", UUID(as_uuid=True), ForeignKey("users.id")),
-    Column("workspace_id", UUID(as_uuid=True), ForeignKey("workspaces.id")),
-)
-```
-
-## Timestamps Mixin
+Relationships exist in the codebase only where needed. The `User` model intentionally has no back-references — queries use explicit `select()` instead.
 
 ```python
-# app/models/mixins.py
-from datetime import datetime
-from sqlalchemy import DateTime, func
-from sqlalchemy.orm import Mapped, mapped_column
+# app/models/chat.py — bidirectional one-to-many
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
 
-
-class TimestampMixin:
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(255), default="New Chat")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage", back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # 'user' | 'assistant'
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    session: Mapped["ChatSession"] = relationship(
+        "ChatSession", back_populates="messages"
+    )
 ```
+
+## Timestamps
+
+Timestamps are defined inline on each model (no shared mixin). Use `DateTime(timezone=True)`, `server_default=func.now()`, and `onupdate=func.now()`:
+
+```python
+created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now()
+)
+updated_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+)
+```
+
+Models where data is immutable (messages, documents, poll responses) may omit `updated_at`.
 
 ## Alembic Migration
 
-Generate: `alembic revision --autogenerate -m "add workspaces table"`
-
-Review the generated file in `alembic/versions/`:
+Migrations are written manually (not autogenerated). Name files sequentially (e.g., `0003_add_todos.py`).
 
 ```python
-"""add workspaces table
+"""add todos table
 
-Revision ID: abc123
-Revises: def456
+Revision ID: 0003_add_todos
+Revises: 0002_poll_responses
 """
 
 from alembic import op
@@ -103,19 +134,27 @@ from sqlalchemy.dialects.postgresql import UUID
 
 def upgrade():
     op.create_table(
-        "workspaces",
+        "todos",
         sa.Column("id", UUID(as_uuid=True), primary_key=True),
-        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("user_id", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("title", sa.String(500), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("owner_id", UUID(as_uuid=True), nullable=False),
+        sa.Column("completed", sa.Boolean(), server_default=sa.text("false")),
+        sa.Column("due_date", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now()),
-        sa.ForeignKeyConstraint(["owner_id"], ["users.id"]),
     )
+    op.create_index("ix_todos_user_id", "todos", ["user_id"])
 
 
 def downgrade():
-    op.drop_table("workspaces")
+    op.drop_table("todos")
+```
+
+Before generating, ensure the model is imported in `alembic/env.py`:
+
+```python
+from app.models import user, chat, document, todo, poll  # noqa: F401
 ```
 
 Apply: `alembic upgrade head`  
@@ -124,31 +163,34 @@ Rollback: `alembic downgrade -1`
 ## Pydantic Schemas
 
 ```python
-# app/schemas/workspace.py
-from pydantic import BaseModel, ConfigDict
+# app/schemas/todo.py
+from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
 
-class WorkspaceCreate(BaseModel):
-    name: str
+class CreateTodoRequest(BaseModel):
+    title: str
     description: str | None = None
+    due_date: datetime | None = None
 
 
-class WorkspaceRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class TodoResponse(BaseModel):
     id: UUID
-    name: str
+    title: str
     description: str | None
+    completed: bool
+    due_date: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
 ```
 
 ## Verification
 
-1. `python -c "from app.models.workspace import Workspace"` — model imports
-2. `alembic revision --autogenerate -m "test"` — migration generates
-3. `alembic upgrade head` — migration applies cleanly
-4. `alembic downgrade -1` — migration rolls back cleanly
-5. `python -c "from app.schemas.workspace import WorkspaceCreate, WorkspaceRead"` — schemas import
+1. `python -c "from app.models.todo import Todo"` — model imports
+2. `alembic upgrade head` — migration applies cleanly
+3. `alembic downgrade -1` — migration rolls back cleanly
+4. `python -c "from app.schemas.todo import CreateTodoRequest, TodoResponse"` — schemas import
+5. Ensure new model is imported in `alembic/env.py` so Alembic is aware of it

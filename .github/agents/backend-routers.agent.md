@@ -12,7 +12,7 @@ Single task: Create or update FastAPI REST endpoints, Pydantic request/response 
 
 - `app/routers/<domain>.py` — endpoint definitions per domain (auth, chat, todos, etc.)
 - `app/schemas/` — Pydantic v2 request/response schemas
-- `app/dependencies/` — shared FastAPI dependencies (auth, DB session, pagination)
+- `app/dependencies.py` — shared FastAPI dependencies (auth, DB session, pagination)
 - `app/main.py` — router registration
 - `tests/test_<domain>.py` — endpoint tests with pytest and httpx
 
@@ -21,7 +21,7 @@ Single task: Create or update FastAPI REST endpoints, Pydantic request/response 
 This agent does NOT handle:
 - SQLAlchemy models or Alembic migrations → use `backend-database`
 - Service layer business logic, external integrations → use `backend-integrations`
-- Planning or review → use `backend-planner` or `backend-code-reviewer`
+- Planning or review → use `backend-planner`
 
 ## Inputs
 

@@ -137,6 +137,4 @@ services:
 |---|---|
 | `DATABASE_URL` | Database connection string for production |
 | `SECRET_KEY` | JWT signing secret |
-| `REDIS_URL` | Redis connection string |
-| `RABBITMQ_URL` | RabbitMQ connection string |
 | `SLACK_WEBHOOK_URL` | Slack webhook for failure notifications (optional) |

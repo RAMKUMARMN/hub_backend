@@ -25,71 +25,100 @@ app/routers/
 ├── auth.py            # Login, register, token refresh
 ├── chat.py            # Chat messages, conversations
 ├── todos.py           # Todo CRUD
-├── workspaces.py      # Workspace management
-└── notifications.py   # Notification endpoints
+├── poll.py            # Poll/survey responses
+├── documents.py       # File upload and management
+└── admin.py           # Admin operations (bulk user create)
 ```
 
-Each router file registers endpoints. The router is included in `app/main.py` via:
+Each router file registers a sub-prefix. `app/main.py` applies the global `/api/v1` prefix:
 
 ```python
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+PREFIX = "/api/v1"
+app.include_router(auth_router, prefix=PREFIX)
+app.include_router(todos_router, prefix=PREFIX)
+```
+
+Router files define only the sub-path:
+
+```python
+router = APIRouter(prefix="/todos", tags=["todos"])
 ```
 
 ## Endpoint Template
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db, get_current_user
-from app.schemas.workspace import WorkspaceCreate, WorkspaceRead
+from app.database import get_db
+from app.dependencies import get_current_user
+from app.models.todo import Todo
 from app.models.user import User
-from app.services import workspace_service
+from app.schemas.todo import CreateTodoRequest, TodoResponse
 
-router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
+router = APIRouter(prefix="/todos", tags=["todos"])
 
 
-@router.get("/", response_model=list[WorkspaceRead])
-async def list_workspaces(
-    db: AsyncSession = Depends(get_db),
+@router.get("/", response_model=list[TodoResponse])
+async def list_todos(
+    completed: bool | None = None,
     current_user: User = Depends(get_current_user),
-):
-    workspaces = await workspace_service.get_workspaces(db, current_user.id)
-    return workspaces
-
-
-@router.post("/", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
-async def create_workspace(
-    data: WorkspaceCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
 ):
-    workspace = await workspace_service.create_workspace(db, data, current_user.id)
-    return workspace
+    query = (
+        select(Todo)
+        .where(Todo.user_id == current_user.id)
+        .order_by(Todo.created_at.desc())
+    )
+    if completed is not None:
+        query = query.where(Todo.completed == completed)
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.post("/", response_model=TodoResponse, status_code=status.HTTP_201_CREATED)
+async def create_todo(
+    body: CreateTodoRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    todo = Todo(
+        user_id=current_user.id,
+        title=body.title,
+        description=body.description,
+    )
+    db.add(todo)
+    await db.commit()
+    await db.refresh(todo)
+    return todo
 ```
 
 ## Pydantic Schemas
 
 ```python
-# app/schemas/workspace.py
-from pydantic import BaseModel, ConfigDict
+# app/schemas/todo.py
+from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
 
 
-class WorkspaceCreate(BaseModel):
-    name: str
+class CreateTodoRequest(BaseModel):
+    title: str
     description: str | None = None
+    due_date: datetime | None = None
 
 
-class WorkspaceRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
+class TodoResponse(BaseModel):
     id: UUID
-    name: str
+    title: str
     description: str | None
+    completed: bool
+    due_date: datetime | None
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
 ```
 
 ## Dependencies
@@ -97,25 +126,37 @@ class WorkspaceRead(BaseModel):
 ### Database session
 
 ```python
-# app/dependencies.py
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import async_session
+# app/database.py
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def get_db() -> AsyncSession:
-    async with async_session() as session:
-        yield session
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
 ```
 
 ### Authentication
 
 ```python
+# app/dependencies.py
+from app.database import get_db
+from app.models.user import User
+from app.services.auth_service import decode_token
+
+
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    token: str = Depends(HTTPBearer()),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    payload = decode_jwt(token)
-    user = await user_service.get_by_id(db, payload["sub"])
+    payload = decode_token(token.credentials)
+    user_id = payload.get("sub")
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")
     return user
@@ -123,13 +164,13 @@ async def get_current_user(
 
 ## Error Handling
 
-Use consistent error responses:
+Use consistent error responses raised inline in handlers:
 
 ```python
 from fastapi import HTTPException, status
 
 # Not found
-raise HTTPException(status_code=404, detail="Workspace not found")
+raise HTTPException(status_code=404, detail="Todo not found")
 
 # Forbidden
 raise HTTPException(status_code=403, detail="Not authorized")
@@ -140,15 +181,15 @@ raise HTTPException(status_code=403, detail="Not authorized")
 ## Testing
 
 ```python
-# tests/test_workspaces.py
+# tests/test_todos.py
 import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 
 
 @pytest.mark.asyncio
-async def test_list_workspaces_returns_200(async_client: AsyncClient, auth_headers):
-    response = await async_client.get("/api/v1/workspaces", headers=auth_headers)
+async def test_list_todos_returns_200(async_client: AsyncClient, auth_headers):
+    response = await async_client.get("/api/v1/todos", headers=auth_headers)
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 ```
@@ -157,5 +198,4 @@ async def test_list_workspaces_returns_200(async_client: AsyncClient, auth_heade
 
 1. `ruff check app/routers/<domain>.py` — lint clean
 2. `python -c "from app.main import app"` — imports resolve
-3. `pytest tests/test_<domain>.py -q` — tests pass
-4. Start server and hit endpoint with `curl` or httpie
+3. Start server (`uvicorn app.main:app --reload`) and hit endpoint with `curl` or httpie
