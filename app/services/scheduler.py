@@ -8,6 +8,8 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 
 async def reminder_job() -> None:
+    print("⏰ Scheduler triggered")
+
     async with AsyncSessionLocal() as db:
         await create_due_soon_notifications(db, manager)
 
