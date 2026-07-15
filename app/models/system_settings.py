@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Uuid, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
+from app.models.role import JSONBType
 
 from app.database import Base
 
@@ -12,7 +12,7 @@ class SystemSettings(Base):
     __tablename__ = "system_settings"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
     )
@@ -24,7 +24,7 @@ class SystemSettings(Base):
     )
 
     value: Mapped[dict] = mapped_column(
-        JSONB,
+        JSONBType,
         default=dict,
     )
 

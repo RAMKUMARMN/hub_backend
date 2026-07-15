@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import Uuid, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
+from app.models.role import JSONBType
 
 from app.database import Base
 
@@ -12,13 +12,13 @@ class UserPreferences(Base):
     __tablename__ = "user_preferences"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,
@@ -30,12 +30,12 @@ class UserPreferences(Base):
     )
 
     notification_settings: Mapped[dict] = mapped_column(
-        JSONB,
+        JSONBType,
         default=dict,
     )
 
     security_settings: Mapped[dict] = mapped_column(
-        JSONB,
+        JSONBType,
         default=dict,
     )
 

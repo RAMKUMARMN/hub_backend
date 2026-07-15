@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
-
 from typing import Literal
 from pydantic import BaseModel
+from app.schemas.subtask import SubtaskResponse
 
 
 class CreateTodoRequest(BaseModel):
@@ -33,7 +33,9 @@ class TodoResponse(BaseModel):
     due_date: datetime | None
     priority: Literal["low", "medium", "high"]
     reminder_time: datetime | None
+    subtasks: list[SubtaskResponse] = []
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
