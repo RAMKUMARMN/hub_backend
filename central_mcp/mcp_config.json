@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "smarthub-central": {
+      "command": "node",
+      "args": [
+        "C:/Users/Kiran/cixio_hub/hub_backend/central_mcp/dist/server.js"
+      ],
+      "env": {
+        "BACKEND_URL": "http://localhost:8000",
+        "BACKEND_TIMEOUT_MS": "120000"
+      }
+    }
+  }
+}
