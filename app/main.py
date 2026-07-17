@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
-from app.database import engine
+from app.database import Base, engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.redis import redis_client
 
@@ -14,6 +14,7 @@ from app.routers import (
     admin_router,
     auth_router,
     chat_router,
+    devices_router,
     documents_router,
     todos_router,
     focus_router,
@@ -24,6 +25,8 @@ from app.routers import (
     notes_router,
     folders_router,
     dashboard_router,
+    n8n_test_router,
+    workflows_router,
 )
 
 @asynccontextmanager
@@ -41,8 +44,6 @@ async def lifespan(app: FastAPI):
         await FastAPILimiter.init(redis_client)
     except Exception as e:
         print("Redis not available:", e)
-
-
     yield
 
     await engine.dispose()
@@ -93,6 +94,9 @@ app.include_router(calendar_router, prefix=PREFIX)
 app.include_router(notes_router, prefix=PREFIX)
 app.include_router(folders_router, prefix=PREFIX)
 app.include_router(dashboard_router, prefix=PREFIX)
+app.include_router(devices_router, prefix=PREFIX)
+app.include_router(n8n_test_router, prefix=PREFIX)
+app.include_router(workflows_router, prefix=PREFIX)
 
 app.include_router(preferences_router, prefix=PREFIX)
 app.include_router(system_router, prefix=PREFIX)

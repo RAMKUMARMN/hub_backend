@@ -1,1 +1,1 @@
-# queue module init
+"""Queue package placeholder."""

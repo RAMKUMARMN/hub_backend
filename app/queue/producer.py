@@ -156,4 +156,3 @@ async def publish_notification_to_queue(
                 raise e
             # Exponential backoff
             await asyncio.sleep(2 ** attempt * 0.1)
-

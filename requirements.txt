@@ -20,4 +20,5 @@ authlib>=1.3.0
 aiosmtplib>=3.0.0
 itsdangerous>=2.0.0
 cloudinary==1.44.2
+greenlet>=3.0.0
 

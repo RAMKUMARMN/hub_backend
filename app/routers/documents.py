@@ -268,6 +268,7 @@ async def list_documents(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List all documents belonging to the current authenticated user."""
     result = await db.execute(
         select(Document)
         .where(Document.user_id == current_user.id)
@@ -320,6 +321,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     ai_client: AIClient = Depends(get_ai_client),
 ):
+    """Delete a document from disk, remove its vector embeddings from ChromaDB, and drop the DB record."""
     result = await db.execute(
         select(Document).where(
             Document.id == document_id, Document.user_id == current_user.id
@@ -328,7 +330,6 @@ async def delete_document(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
-
     # 1. Remove the physical file from local storage / S3.
     await delete_file(doc.storage_path)
 

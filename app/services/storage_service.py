@@ -64,7 +64,7 @@ async def save_file(
     user_dir.mkdir(parents=True, exist_ok=True)
     dest = user_dir / unique_name
     dest.write_bytes(file_bytes)
-    return str(dest.relative_to(UPLOAD_DIR))
+    return str(dest.resolve().relative_to(UPLOAD_DIR.resolve()))
 
 
 async def delete_file(storage_path: str) -> None:

@@ -1,0 +1,25 @@
+{
+  "name": "mcp_hub_backend",
+  "version": "1.0.0",
+  "description": "MCP server for hub_backend",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^latest",
+    "zod": "^latest"
+  },
+  "devDependencies": {
+    "@types/node": "^latest",
+    "ts-node": "^latest",
+    "typescript": "^latest"
+  }
+}
+

@@ -51,7 +51,6 @@ async def create_todo(
     db.add(todo)
     await db.commit()
     await db.refresh(todo)
-
     if todo.reminder_time:
         try:
             tokens = current_user.device_tokens or []
@@ -73,7 +72,6 @@ async def create_todo(
     await invalidate_dashboard_cache(current_user.id)
 
     return todo
-
 
 @router.put("/{todo_id}", response_model=TodoResponse)
 async def update_todo(
