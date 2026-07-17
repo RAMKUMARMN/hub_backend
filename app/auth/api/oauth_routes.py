@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.auth.security.google_oauth import oauth
 from app.auth.security.jwt import (
-    create_access_token,
-    create_refresh_token,
     verify_google_token,
 )
 from app.auth.services.oauth_service import OAuthService

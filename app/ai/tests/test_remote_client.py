@@ -1,6 +1,5 @@
 import uuid
 import pytest
-import httpx
 from unittest.mock import patch, MagicMock
 
 from app.ai.remote_client import RemoteAIClient

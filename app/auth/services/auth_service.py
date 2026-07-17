@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.repositories.user_repository import UserRepository
 from app.auth.security.password import hash_password, verify_password
-from app.auth.schemas.auth import RegisterRequest, TokenResponse
+from app.auth.schemas.auth import RegisterRequest
 from app.models.user import User
 from app.auth.utils.validators import is_valid_institutional_email
 

@@ -2,8 +2,6 @@ import pytest
 import pytest_asyncio
 import uuid
 import json
-import os
-import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import status
 from httpx import AsyncClient, ASGITransport

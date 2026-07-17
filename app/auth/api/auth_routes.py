@@ -185,6 +185,7 @@ async def refresh_user_identifier(request: Request):
             if user_id:
                 return user_id
     except Exception:
+        # Fallback to IP address if JSON body parsing or token decoding fails
         pass
 
     # Fallback to IP address if token is missing or invalid

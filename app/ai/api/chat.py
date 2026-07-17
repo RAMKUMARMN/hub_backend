@@ -433,7 +433,7 @@ async def _process_chat_message_and_stream(
                 select(Document.id).where(
                     Document.user_id == current_user.id,
                     Document.processed == True,
-                    (Document.session_id == None) | (Document.session_id == session_id),
+                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                 )
             )
             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
@@ -1008,6 +1008,7 @@ async def _process_chat_message_and_stream(
                                     try:
                                         doc_id = uuid.UUID(doc_id_str)
                                     except ValueError:
+                                        # Ignore invalid UUID format and fallback
                                         pass
                                 
                                 if not doc_id:
@@ -1078,6 +1079,7 @@ async def _process_chat_message_and_stream(
                                                     try:
                                                         os.unlink(temp_file_path)
                                                     except Exception:
+                                                        # Ignore clean up errors for temporary file deletion
                                                         pass
                                 
                                 if not tool_result:
@@ -1114,7 +1116,7 @@ async def _process_chat_message_and_stream(
                                                 select(Document.id).where(
                                                     Document.user_id == current_user.id,
                                                     Document.processed == True,
-                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                                 )
                                             )
                                             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
@@ -1154,7 +1156,7 @@ async def _process_chat_message_and_stream(
                                             select(Document).where(
                                                 Document.user_id == current_user.id,
                                                 Document.processed == True,
-                                                (Document.session_id == None) | (Document.session_id == session_id),
+                                                (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                             )
                                         )
                                         allowed_docs = allowed_docs_result.scalars().all()
@@ -1180,7 +1182,7 @@ async def _process_chat_message_and_stream(
                                                 select(Document).where(
                                                     Document.id == doc_id,
                                                     Document.user_id == current_user.id,
-                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                                 )
                                             )
                                             doc_obj = doc_res.scalar_one_or_none()
@@ -1209,12 +1211,13 @@ async def _process_chat_message_and_stream(
                                     yield f"data: {json.dumps({'status': f'✅ Creating task \"{title}\"...'})}\n\n"
                                     try:
                                         from app.models.todo import Todo
-                                        from datetime import date
+                                        from datetime import datetime
                                         due_date_val = None
                                         if args.get("due_date"):
                                             try:
                                                 due_date_val = datetime.fromisoformat(args["due_date"].replace("Z", "+00:00"))
                                             except ValueError:
+                                                # Fail silently and fallback to None if ISO format parsing fails
                                                 pass
                                         
                                         reminder_time_val = None
@@ -1222,6 +1225,7 @@ async def _process_chat_message_and_stream(
                                             try:
                                                 reminder_time_val = datetime.fromisoformat(args["reminder_time"].replace("Z", "+00:00"))
                                             except ValueError:
+                                                # Fail silently and fallback to None if ISO format parsing fails
                                                 pass
 
                                         async with AsyncSessionLocal() as db_session:
