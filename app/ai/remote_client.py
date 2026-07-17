@@ -22,7 +22,8 @@ class RemoteAIClient(AIClient):
         messages: list[dict],
         think: bool = True,
     ) -> AsyncIterator[str]:
-        async with self._get_client(timeout=120.0) as client:
+        in_thinking = False
+        async with self._get_client(timeout=300.0) as client:
             async with client.stream("POST", "/api/v1/chat/stream", json={"messages": messages, "think": think}) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
@@ -32,11 +33,21 @@ class RemoteAIClient(AIClient):
                             break
                         try:
                             payload = json.loads(data_str)
-                            token = payload.get("delta") or payload.get("thinking") or ""
-                            if token:
-                                  yield token
+                            if "thinking" in payload and payload["thinking"]:
+                                if not in_thinking:
+                                    in_thinking = True
+                                    yield "<think>"
+                                yield payload["thinking"]
+                            elif "delta" in payload and payload["delta"]:
+                                if in_thinking:
+                                    in_thinking = False
+                                    yield "</think>"
+                                yield payload["delta"]
                         except json.JSONDecodeError:
                             pass
+                # Close any open thinking block
+                if in_thinking:
+                    yield "</think>"
 
     async def summarize_text(
         self,
@@ -85,7 +96,7 @@ class RemoteAIClient(AIClient):
         think: bool = True,
     ) -> dict:
         """One-shot chat completion with support for tool/function calling."""
-        async with self._get_client(timeout=120.0) as client:
+        async with self._get_client(timeout=300.0) as client:
             response = await client.post(
                 "/api/v1/chat/tools",
                 json={
@@ -178,3 +189,17 @@ class RemoteAIClient(AIClient):
             )
             response.raise_for_status()
             return response.json()["text"]
+
+    async def web_search(
+        self,
+        query: str,
+        max_results: int = 5,
+    ) -> str:
+        """Search the web via the AI microservice."""
+        async with self._get_client(timeout=30.0) as client:
+            response = await client.post(
+                "/api/v1/web/search",
+                json={"query": query, "max_results": max_results},
+            )
+            response.raise_for_status()
+            return response.json()["result"]

@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     notification_service_url: str = "http://localhost:8001/api/v1/notify/send"
 
     # AI / LLM Configuration
-    use_remote_ai: bool = False
+    use_remote_ai: bool = True
     ai_service_url: str = "http://localhost:8003"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"

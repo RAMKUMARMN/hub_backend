@@ -9,9 +9,6 @@ from fastapi import status
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import text
 
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, TokenizerType, TextIndexParams, VectorParams, PayloadSchemaType
-
 from app.main import app
 from app.database import AsyncSessionLocal
 from app.ai.client import get_ai_client
@@ -63,76 +60,6 @@ async def authenticated_client(client):
     client.headers.update({"Authorization": f"Bearer {token}"})
     return client
 
-@pytest_asyncio.fixture
-async def setup_qdrant_test_collection():
-    """
-    Configures a temporary test collection in Qdrant for the duration of the test.
-    Automatically overrides settings.qdrant_collection and deletes the collection on teardown.
-    """
-    original_collection = settings.qdrant_collection
-    test_collection_name = f"temp_test_collection_{uuid.uuid4().hex}"
-    settings.qdrant_collection = test_collection_name
-
-    client = AsyncQdrantClient(url=settings.qdrant_url)
-
-    if await client.collection_exists(test_collection_name):
-        await client.delete_collection(test_collection_name)
-
-    await client.create_collection(
-        collection_name=test_collection_name,
-        vectors_config=VectorParams(
-            size=768,  # nomic-embed-text dimensions
-            distance=Distance.COSINE
-        )
-    )
-
-    await client.create_payload_index(
-        collection_name=test_collection_name,
-        field_name="text",
-        field_schema=TextIndexParams(
-            type="text",
-            tokenizer=TokenizerType.MULTILINGUAL,
-            lowercase=True
-        )
-    )
-
-    await client.create_payload_index(
-        collection_name=test_collection_name,
-        field_name="filename",
-        field_schema=TextIndexParams(
-            type="text",
-            tokenizer=TokenizerType.MULTILINGUAL,
-            lowercase=True
-        )
-    )
-
-    await client.create_payload_index(
-        collection_name=test_collection_name,
-        field_name="user_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-
-    await client.create_payload_index(
-        collection_name=test_collection_name,
-        field_name="document_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-
-    await client.create_payload_index(
-        collection_name=test_collection_name,
-        field_name="session_id",
-        field_schema=PayloadSchemaType.KEYWORD,
-    )
-
-    yield client
-
-    try:
-        await client.delete_collection(test_collection_name)
-    except Exception:
-        pass
-    
-    settings.qdrant_collection = original_collection
-
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -153,7 +80,7 @@ async def test_create_and_list_sessions(authenticated_client):
     assert sessions[0]["id"] == session_id
 
 @pytest.mark.asyncio
-@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
+@patch("app.ai.remote_client.httpx.AsyncClient.stream")
 async def test_send_message_stream(mock_stream_post, authenticated_client):
     resp = await authenticated_client.post(
         "/api/v1/chat/sessions",
@@ -167,9 +94,10 @@ async def test_send_message_stream(mock_stream_post, authenticated_client):
     
     async def mock_aiter_lines():
         lines = [
-            json.dumps({"message": {"content": "Hello! "}}),
-            json.dumps({"message": {"content": "I am "}}),
-            json.dumps({"message": {"content": "an AI."}}),
+            'data: ' + json.dumps({"delta": "Hello! "}),
+            'data: ' + json.dumps({"delta": "I am "}),
+            'data: ' + json.dumps({"delta": "an AI."}),
+            'data: [DONE]',
         ]
         for line in lines:
             yield line
@@ -206,8 +134,8 @@ async def test_send_message_stream(mock_stream_post, authenticated_client):
 
 @pytest.mark.asyncio
 @patch("app.routers.documents.save_file")
-@patch("app.ai.local_client.LocalAIClient.extract_text")
-@patch("app.ai.local_client.LocalAIClient.store_document_vectors")
+@patch("app.ai.remote_client.RemoteAIClient.extract_text")
+@patch("app.ai.remote_client.RemoteAIClient.store_document_vectors")
 async def test_upload_document(mock_store, mock_extract, mock_save, authenticated_client):
     mock_save.return_value = "documents/test_user/test.txt"
     mock_extract.return_value = "This is a test document content for RAG."
@@ -223,215 +151,10 @@ async def test_upload_document(mock_store, mock_extract, mock_save, authenticate
     assert data["filename"] == "test.txt"
     assert data["processed"] is False
 
-@pytest.mark.live
-@pytest.mark.asyncio
-@patch("app.ai.local_client.LocalAIClient.extract_text")
-async def test_real_document_upload_and_rag_chat(mock_extract, authenticated_client, setup_qdrant_test_collection):
-    """
-    Performs a live end-to-end integration test of the RAG pipeline.
-    Tests document vector storage in Qdrant, document processing polling,
-    vector semantic search, and streaming Ollama completions.
-    
-    The external text extraction service is mocked to bypass dependency on the AI port 8003.
-    """
-    mock_extract.return_value = "CixioHub is developed by Team Beta. The current version of the project is 1.4.0."
-
-    fact_file_content = b"CixioHub is developed by Team Beta. The current version of the project is 1.4.0."
-    upload_resp = await authenticated_client.post(
-        "/api/v1/documents/upload",
-        files={"file": ("rag_fact.txt", fact_file_content, "text/plain")}
-    )
-    assert upload_resp.status_code == status.HTTP_202_ACCEPTED
-    doc_id = upload_resp.json()["id"]
-
-    processed = False
-    for _ in range(40):
-        await asyncio.sleep(0.5)
-        list_resp = await authenticated_client.get("/api/v1/documents/")
-        assert list_resp.status_code == 200
-        docs = list_resp.json()
-        target_doc = next((d for d in docs if d["id"] == doc_id), None)
-        if target_doc and target_doc["processed"]:
-            processed = True
-            break
-            
-    assert processed, "Document was not processed in time."
-
-    session_resp = await authenticated_client.post(
-        "/api/v1/chat/sessions",
-        json={"title": "Real RAG Chat Test"}
-    )
-    assert session_resp.status_code == status.HTTP_201_CREATED
-    session_id = session_resp.json()["id"]
-
-    msg_resp = await authenticated_client.post(
-        f"/api/v1/chat/sessions/{session_id}/messages",
-        json={"content": "What is the current version of the CixioHub project?", "use_rag": True},
-        timeout=60.0
-    )
-    assert msg_resp.status_code == 200
-    assert "text/event-stream" in msg_resp.headers["content-type"]
-
-    events = []
-    async for line in msg_resp.aiter_lines():
-        if line.startswith("data: "):
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            events.append(json.loads(data_str))
-
-    assert len(events) > 0
-    
-    assert "sources" in events[0]
-    sources = events[0]["sources"]
-    assert len(sources) > 0
-    assert any(s["filename"] == "rag_fact.txt" for s in sources)
-
-    full_response = ""
-    for event in events[1:]:
-        if "delta" in event:
-            full_response += event["delta"]
-        elif "thinking" in event:
-            full_response += event["thinking"]
-
-    assert "1.4" in full_response, f"Expected fact '1.4' not found in response: '{full_response}'"
-    print(f"\n✅ Real RAG response: {full_response}")
-
-
-@pytest.mark.live
-@pytest.mark.asyncio
-@patch("app.ai.local_client.LocalAIClient.extract_text")
-async def test_session_scoped_rag_isolation(
-    mock_extract,
-    authenticated_client,
-    setup_qdrant_test_collection,
-):
-    """
-    Tests isolation between global files and session-scoped files:
-    1. Creates Session A and Session B.
-    2. Uploads:
-       - global_doc.txt (global, no session_id)
-       - session_a_doc.txt (scoped to Session A)
-       - session_b_doc.txt (scoped to Session B)
-    3. Verifies that RAG in Session A retrieves chunks only from global_doc.txt and session_a_doc.txt.
-    4. Verifies that RAG in Session B retrieves chunks only from global_doc.txt and session_b_doc.txt.
-    """
-    # Define text extraction mock outputs
-    def mock_extract_side_effect(file_path, file_type):
-        if "global" in file_path:
-            return "This is global knowledge. The key code is GLOBAL_123."
-        elif "session_a" in file_path:
-            return "This is unique session A knowledge. The key code is ALPHABET_A."
-        elif "session_b" in file_path:
-            return "This is unique session B knowledge. The key code is ALPHABET_B."
-        return "Generic fallback content."
-
-    mock_extract.side_effect = mock_extract_side_effect
-
-    # 1. Create Session A and Session B
-    session_a_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Session A"})
-    assert session_a_resp.status_code == status.HTTP_201_CREATED
-    session_a_id = session_a_resp.json()["id"]
-
-    session_b_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Session B"})
-    assert session_b_resp.status_code == status.HTTP_201_CREATED
-    session_b_id = session_b_resp.json()["id"]
-
-    # 2. Upload the three documents
-    # Global document (no session_id)
-    global_upload = await authenticated_client.post(
-        "/api/v1/documents/upload",
-        files={"file": ("global_doc.txt", b"dummy content", "text/plain")}
-    )
-    assert global_upload.status_code == status.HTTP_202_ACCEPTED
-    global_doc_id = global_upload.json()["id"]
-    assert global_upload.json()["session_id"] is None
-
-    # Session A document
-    session_a_upload = await authenticated_client.post(
-        f"/api/v1/documents/upload?session_id={session_a_id}",
-        files={"file": ("session_a_doc.txt", b"dummy content", "text/plain")}
-    )
-    assert session_a_upload.status_code == status.HTTP_202_ACCEPTED
-    session_a_doc_id = session_a_upload.json()["id"]
-    assert session_a_upload.json()["session_id"] == session_a_id
-
-    # Session B document
-    session_b_upload = await authenticated_client.post(
-        f"/api/v1/documents/upload?session_id={session_b_id}",
-        files={"file": ("session_b_doc.txt", b"dummy content", "text/plain")}
-    )
-    assert session_b_upload.status_code == status.HTTP_202_ACCEPTED
-    session_b_doc_id = session_b_upload.json()["id"]
-    assert session_b_upload.json()["session_id"] == session_b_id
-
-    # 3. Wait for all documents to be processed by background tasks
-    processed = False
-    for _ in range(40):
-        await asyncio.sleep(0.5)
-        list_resp = await authenticated_client.get("/api/v1/documents/")
-        assert list_resp.status_code == 200
-        docs = list_resp.json()
-        
-        target_docs = [d for d in docs if d["id"] in [global_doc_id, session_a_doc_id, session_b_doc_id]]
-        if len(target_docs) == 3 and all(d["processed"] for d in target_docs):
-            processed = True
-            break
-            
-    assert processed, "Not all documents were processed in time."
-
-    # 4. Verify RAG in Session A (should match global_doc.txt and session_a_doc.txt, NOT session_b_doc.txt)
-    msg_a_resp = await authenticated_client.post(
-        f"/api/v1/chat/sessions/{session_a_id}/messages",
-        json={"content": "What is the key code?", "use_rag": True},
-        timeout=50.0
-    )
-    assert msg_a_resp.status_code == 200
-
-    # Parse sources from SSE stream
-    sources_a = []
-    async for line in msg_a_resp.aiter_lines():
-        if line.startswith("data: "):
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            payload = json.loads(data_str)
-            if "sources" in payload:
-                sources_a = payload["sources"]
-                break
-
-    assert len(sources_a) > 0
-    filenames_a = [s["filename"] for s in sources_a]
-    assert "global_doc.txt" in filenames_a or "session_a_doc.txt" in filenames_a
-    assert "session_b_doc.txt" not in filenames_a
-
-    # 5. Verify RAG in Session B (should match global_doc.txt and session_b_doc.txt, NOT session_a_doc.txt)
-    msg_b_resp = await authenticated_client.post(
-        f"/api/v1/chat/sessions/{session_b_id}/messages",
-        json={"content": "What is the key code?", "use_rag": True},
-        timeout=50.0
-    )
-    assert msg_b_resp.status_code == 200
-
-    sources_b = []
-    async for line in msg_b_resp.aiter_lines():
-        if line.startswith("data: "):
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            payload = json.loads(data_str)
-            if "sources" in payload:
-                sources_b = payload["sources"]
-                break
-
-    assert len(sources_b) > 0
-    filenames_b = [s["filename"] for s in sources_b]
-    assert "global_doc.txt" in filenames_b or "session_b_doc.txt" in filenames_b
-    assert "session_a_doc.txt" not in filenames_b
 
 
 @pytest.mark.asyncio
-@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
+@patch("app.ai.remote_client.httpx.AsyncClient.stream")
 async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
     """
     Verifies that the thinking_mode query parameter is accepted by the schema
@@ -448,7 +171,8 @@ async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
     
     async def mock_aiter_lines():
         lines = [
-            json.dumps({"message": {"content": "Direct response content"}}),
+            'data: ' + json.dumps({"delta": "Direct response content"}),
+            'data: [DONE]',
         ]
         for line in lines:
             yield line
@@ -478,163 +202,13 @@ async def test_thinking_mode_toggle(mock_stream_post, authenticated_client):
     assert msg_resp_true.status_code == 200
 
 
-@pytest.mark.live
-@pytest.mark.asyncio
-async def test_search_relevant_chunks_prioritization(setup_qdrant_test_collection):
-    """
-    Verifies that search_relevant_chunks prioritizes documents belonging to
-    the current session over global documents when scores are equal.
-    """
-    from app.ai import store_document_vectors, search_relevant_chunks
-    user_id = uuid.uuid4()
-    session_id = uuid.uuid4()
-    
-    global_doc_id = uuid.uuid4()
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=global_doc_id,
-        text="The quick brown fox jumps over the lazy dog.",
-        filename="global.txt",
-        session_id=None,
-    )
-    
-    session_doc_id = uuid.uuid4()
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=session_doc_id,
-        text="The quick brown fox jumps over the lazy dog.",
-        filename="session.txt",
-        session_id=session_id,
-    )
-    
-    results = await search_relevant_chunks(
-        user_id=user_id,
-        query="brown fox",
-        limit=2,
-        allowed_document_ids=[global_doc_id, session_doc_id],
-        session_id=session_id,
-    )
-    
-    assert len(results) == 2
-    assert results[0]["filename"] == "session.txt"
-    assert results[1]["filename"] == "global.txt"
 
 
 
-@pytest.mark.live
-@pytest.mark.asyncio
-@patch("app.ai.local_client.LocalAIClient.extract_text")
-async def test_api_rag_prioritization(
-    mock_extract,
-    authenticated_client,
-    setup_qdrant_test_collection,
-):
-    """
-    Verifies that the chat messages endpoint prioritizes session-scoped document chunks
-    over global document chunks through the HTTP API.
-    """
-    mock_extract.return_value = "The quick brown fox jumps over the lazy dog."
-
-    session_resp = await authenticated_client.post("/api/v1/chat/sessions", json={"title": "Priority Session"})
-    assert session_resp.status_code == status.HTTP_201_CREATED
-    session_id = session_resp.json()["id"]
-
-    global_upload = await authenticated_client.post(
-        "/api/v1/documents/upload",
-        files={"file": ("global_priority.txt", b"dummy", "text/plain")}
-    )
-    assert global_upload.status_code == status.HTTP_202_ACCEPTED
-    global_doc_id = global_upload.json()["id"]
-
-    session_upload = await authenticated_client.post(
-        f"/api/v1/documents/upload?session_id={session_id}",
-        files={"file": ("session_priority.txt", b"dummy", "text/plain")}
-    )
-    assert session_upload.status_code == status.HTTP_202_ACCEPTED
-    session_doc_id = session_upload.json()["id"]
-
-    # Wait for the background worker to index both files in Qdrant
-    processed = False
-    for _ in range(40):
-        await asyncio.sleep(0.5)
-        list_resp = await authenticated_client.get("/api/v1/documents/")
-        assert list_resp.status_code == 200
-        docs = list_resp.json()
-        target_docs = [d for d in docs if d["id"] in [global_doc_id, session_doc_id]]
-        if len(target_docs) == 2 and all(d["processed"] for d in target_docs):
-            processed = True
-            break
-            
-    assert processed, "Documents were not processed in time."
-
-    msg_resp = await authenticated_client.post(
-        f"/api/v1/chat/sessions/{session_id}/messages",
-        json={"content": "brown fox", "use_rag": True},
-        timeout=50.0
-    )
-    assert msg_resp.status_code == 200
-
-    # Parse sources payload from the stream
-    sources = []
-    async for line in msg_resp.aiter_lines():
-        if line.startswith("data: "):
-            data_str = line[6:]
-            if data_str == "[DONE]":
-                break
-            payload = json.loads(data_str)
-            if "sources" in payload:
-                sources = payload["sources"]
-                break
-
-    assert len(sources) >= 2
-    # The session document must rank higher than the global one due to the +0.15 boost
-    assert sources[0]["filename"] == "session_priority.txt"
-    assert sources[1]["filename"] == "global_priority.txt"
-
-
-@pytest.mark.live
-@pytest.mark.asyncio
-async def test_search_relevant_chunks_filename_prioritization(setup_qdrant_test_collection):
-    """
-    Verifies that search_relevant_chunks prioritizes documents whose filename contains
-    keywords from the query, using the +0.20 boost.
-    """
-    from app.ai import store_document_vectors, search_relevant_chunks
-    user_id = uuid.uuid4()
-    
-    random_doc_id = uuid.uuid4()
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=random_doc_id,
-        text="The quick brown fox jumps over the lazy dog.",
-        filename="random_notes.txt",
-        session_id=None,
-    )
-    
-    resume_doc_id = uuid.uuid4()
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=resume_doc_id,
-        text="The quick brown fox jumps over the lazy dog.",
-        filename="resume_johndoe.pdf",
-        session_id=None,
-    )
-    
-    results = await search_relevant_chunks(
-        user_id=user_id,
-        query="explain my resume",
-        limit=2,
-        allowed_document_ids=[random_doc_id, resume_doc_id],
-        session_id=None,
-    )
-    
-    assert len(results) == 2
-    assert results[0]["filename"] == "resume_johndoe.pdf"
-    assert results[1]["filename"] == "random_notes.txt"
 
 
 @pytest.mark.asyncio
-@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
+@patch("app.ai.remote_client.httpx.AsyncClient.stream")
 async def test_chat_rag_chunk_limit_and_get_stream(mock_stream_post, authenticated_client):
     """
     Verifies that the SendMessageRequest schema validates rag_chunk_limit bounds,
@@ -651,7 +225,8 @@ async def test_chat_rag_chunk_limit_and_get_stream(mock_stream_post, authenticat
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     async def mock_aiter_lines():
-        yield json.dumps({"message": {"content": "Response"}})
+        yield 'data: ' + json.dumps({"delta": "Response"})
+        yield 'data: [DONE]'
     mock_response.aiter_lines = mock_aiter_lines
     
     class AsyncContextManagerMock:
@@ -870,82 +445,6 @@ async def test_chat_get_stream_passes_hyde_toggle(authenticated_client):
     finally:
         app.dependency_overrides.pop(get_ai_client, None)
 
-
-@pytest.mark.live
-@pytest.mark.asyncio
-async def test_search_relevant_chunks_selected_similarity_boost(setup_qdrant_test_collection):
-    """
-    Verifies that search_relevant_chunks applies the +0.40 score boost
-    for selected documents matching query keywords in name or content.
-    """
-    from app.ai import store_document_vectors, search_relevant_chunks
-    user_id = uuid.uuid4()
-    
-    # Create two documents. One will be selected, the other not.
-    selected_doc_id = uuid.uuid4()
-    other_doc_id = uuid.uuid4()
-    
-    # Store selected doc (has matching filename keyword)
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=selected_doc_id,
-        text="This contains some general info.",
-        filename="selected_invoice.pdf",
-    )
-    
-    # Store other doc (also has matching filename keyword, but not selected)
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=other_doc_id,
-        text="This contains some general info.",
-        filename="other_invoice.pdf",
-    )
-    
-    # 1. Test filename match boost (+0.40) on selected doc
-    # Both are similar to the query "invoice info" by filename.
-    # But only selected_doc_id is in selected_document_ids.
-    # Therefore, selected_doc_id should get the 0.40 boost and rank first.
-    results = await search_relevant_chunks(
-        user_id=user_id,
-        query="invoice info",
-        limit=2,
-        allowed_document_ids=[selected_doc_id, other_doc_id],
-        selected_document_ids=[selected_doc_id],
-    )
-    
-    assert len(results) == 2
-    assert results[0]["filename"] == "selected_invoice.pdf"
-    
-    # 2. Test content match boost (+0.40) on selected doc
-    # Let's create two docs where the filename does NOT match, but the text content matches query keyword "banana".
-    selected_banana_doc_id = uuid.uuid4()
-    other_banana_doc_id = uuid.uuid4()
-    
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=selected_banana_doc_id,
-        text="The quick yellow banana is sweet.",
-        filename="first.txt",
-    )
-    
-    await store_document_vectors(
-        user_id=user_id,
-        document_id=other_banana_doc_id,
-        text="The quick yellow banana is sweet.",
-        filename="second.txt",
-    )
-    
-    results_banana = await search_relevant_chunks(
-        user_id=user_id,
-        query="banana fruit",
-        limit=2,
-        allowed_document_ids=[selected_banana_doc_id, other_banana_doc_id],
-        selected_document_ids=[selected_banana_doc_id],
-    )
-    
-    assert len(results_banana) == 2
-    # The selected document should be first since it got +0.40 boost
-    assert results_banana[0]["filename"] == "first.txt"
 
 
 @pytest.mark.asyncio

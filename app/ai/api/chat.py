@@ -55,6 +55,16 @@ class ThinkTagParser:
 
         while True:
             if not self.is_thinking:
+                # Fallback: check if the model forgot the opening <think> but output </think>
+                idx_close = self.buffer.find("</think>")
+                if idx_close != -1:
+                    leaked_think = self.buffer[:idx_close]
+                    if leaked_think and self.thinking_mode:
+                        events.append(("thinking", leaked_think))
+                    self.buffer = self.buffer[idx_close + 8:]
+                    self.is_thinking = False
+                    continue
+
                 idx = self.buffer.find("<think>")
                 if idx != -1:
                     normal_text = self.buffer[:idx]
@@ -77,6 +87,20 @@ class ThinkTagParser:
                 if prefix_found:
                     break
                 
+                # Check for partial closing tag prefix to prevent it from leaking into delta
+                prefix_close_found = False
+                for length in range(7, 0, -1):
+                    prefix = "</think"[:length]
+                    if self.buffer.endswith(prefix):
+                        normal_text = self.buffer[:-length]
+                        if normal_text:
+                            events.append(("delta", normal_text))
+                        self.buffer = prefix
+                        prefix_close_found = True
+                        break
+                if prefix_close_found:
+                    break
+
                 if self.buffer:
                     events.append(("delta", self.buffer))
                     self.buffer = ""
@@ -561,10 +585,20 @@ async def _process_chat_message_and_stream(
 
     # 6.5. Inject thinking mode instruction.
     if thinking_mode:
-        system_instruction += (
-            "\n\nCRITICAL: You MUST think step by step and output your reasoning inside <think>...</think> tags before providing your final answer. "
-            "Write at least 2-3 sentences explaining your thought process inside the tags."
-        )
+        # Check if the model natively supports thinking/reasoning outputs.
+        # Models like qwen3.5 and deepseek-r1 natively output reasoning/thinking fields,
+        # so we don't need to force <think> tags via prompt engineering.
+        from app.config import settings as app_settings
+        model_lower = (app_settings.ollama_model or "").lower()
+        native_thinking_models = ["qwen3.5", "r1", "reasoning", "deepseek"]
+        is_native_thinking = any(kw in model_lower for kw in native_thinking_models)
+
+        if not is_native_thinking:
+            system_instruction += (
+                "\n\nCRITICAL: If your model does not natively generate a reasoning/thinking block, "
+                "you MUST think step by step and output your reasoning inside <think>...</think> tags before providing your final answer. "
+                "Write at least 2-3 sentences explaining your thought process inside the tags."
+            )
     else:
         # Only append "Respond directly" if web search or visual reinspection is not active, to avoid contradicting tool calling instructions.
         if not (web_search or (use_rag and has_visual_chunks)):
@@ -1083,11 +1117,10 @@ async def _process_chat_message_and_stream(
                                         search_count += 1
                                         # Yield status update to frontend
                                         yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
-                                        from app.ai.services.search_service import unified_web_search
                                         try:
-                                            tool_result = await unified_web_search(query_arg, max_results=5)
+                                            tool_result = await ai_client.web_search(query_arg, max_results=5)
                                         except Exception as e:
-                                            logger.error("Error in unified_web_search: %s", e, exc_info=True)
+                                            logger.error("Error in web_search: %s", e, exc_info=True)
                                             tool_result = f"Error during web search: {str(e)}"
                                 else:
                                     tool_result = "Error: search query argument is missing."
@@ -1097,7 +1130,6 @@ async def _process_chat_message_and_stream(
                                 if query_arg:
                                     yield f"data: {json.dumps({'status': f'📚 Searching files for \"{query_arg}\"...'})}\n\n"
                                     try:
-                                        from app.ai.services.vector_service import search_relevant_chunks
                                         async with AsyncSessionLocal() as db_session:
                                             allowed_docs_result = await db_session.execute(
                                                 select(Document.id).where(
@@ -1109,7 +1141,7 @@ async def _process_chat_message_and_stream(
                                             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
                                             
                                             if allowed_doc_ids:
-                                                chunks = await search_relevant_chunks(
+                                                chunks = await ai_client.search_relevant_chunks(
                                                     user_id=current_user.id,
                                                     query=query_arg,
                                                     limit=rag_chunk_limit,

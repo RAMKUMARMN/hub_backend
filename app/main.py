@@ -9,7 +9,7 @@ from app.config import settings
 from app.database import engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.redis import redis_client
-from app.ai import init_qdrant_collection
+
 from app.routers import (
     admin_router,
     auth_router,
@@ -41,11 +41,7 @@ async def lifespan(app: FastAPI):
         await FastAPILimiter.init(redis_client)
     except Exception as e:
         print("Redis not available:", e)
-    try:
-        if not settings.use_remote_ai:
-            await init_qdrant_collection()
-    except Exception as e:
-        print("Qdrant not available:", e)
+
 
     yield
 

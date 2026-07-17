@@ -274,13 +274,44 @@ async def test_delete_calendar_event(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_google_calendar_sync(client, auth_headers):
-    # Verify sync works and returns success
-    response = await client.post("/api/v1/calendar/sync/google", headers=auth_headers)
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["status"] == "success"
-    assert "last_sync" in data
-    assert data["imported_count"] == 1
+    from unittest.mock import AsyncMock, MagicMock, patch
+    import httpx
+    
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "items": [
+            {
+                "summary": "Synced Google Event",
+                "description": "This is a synced event",
+                "start": {"dateTime": "2026-07-16T12:00:00Z"},
+                "end": {"dateTime": "2026-07-16T13:00:00Z"},
+                "recurrence": []
+            }
+        ]
+    }
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    
+    class AsyncContextManagerMock:
+        async def __aenter__(self):
+            return mock_client
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch("httpx.AsyncClient", return_value=AsyncContextManagerMock()):
+        # Verify sync works and returns success
+        response = await client.post(
+            "/api/v1/calendar/sync/google",
+            params={"google_token": "mock_google_token"},
+            headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] == "success"
+        assert "last_sync" in data
+        assert data["imported_count"] == 1
 
     # Verify status is now synced
     status_response = await client.get("/api/v1/calendar/sync/status", headers=auth_headers)

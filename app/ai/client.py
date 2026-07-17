@@ -95,6 +95,14 @@ class AIClient(Protocol):
         """Extract text from a file (e.g. PDF/DOCX/OCR)."""
         ...
 
+    async def web_search(
+        self,
+        query: str,
+        max_results: int = 5,
+    ) -> str:
+        """Search the web and return formatted results."""
+        ...
+
 
 _client: AIClient | None = None
 
@@ -105,10 +113,6 @@ def get_ai_client() -> AIClient:
     """
     global _client
     if _client is None:
-        if settings.use_remote_ai:
-            from app.ai.remote_client import RemoteAIClient
-            _client = RemoteAIClient()
-        else:
-            from app.ai.local_client import LocalAIClient
-            _client = LocalAIClient()
+        from app.ai.remote_client import RemoteAIClient
+        _client = RemoteAIClient()
     return _client

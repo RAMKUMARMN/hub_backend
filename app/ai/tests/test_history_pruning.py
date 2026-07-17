@@ -123,7 +123,7 @@ async def test_pruning_marks_messages_as_summarized_and_keeps_in_db(authenticate
 
 
 @pytest.mark.asyncio
-@patch("app.ai.services.llm_service.httpx.AsyncClient.stream")
+@patch("app.ai.remote_client.httpx.AsyncClient.stream")
 async def test_send_message_uses_only_unsummarized_history(mock_stream_post, authenticated_client):
     """
     Verifies that send_message:
@@ -163,7 +163,8 @@ async def test_send_message_uses_only_unsummarized_history(mock_stream_post, aut
     mock_response = MagicMock()
     mock_response.raise_for_status = MagicMock()
     async def mock_aiter_lines():
-        yield json.dumps({"message": {"content": "Response to new message"}})
+        yield 'data: ' + json.dumps({"delta": "Response to new message"})
+        yield 'data: [DONE]'
     mock_response.aiter_lines = mock_aiter_lines
 
     class AsyncContextManagerMock:

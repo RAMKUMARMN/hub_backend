@@ -86,7 +86,7 @@ from app.services.calendar_sync_service import CalendarSyncService
 
 @router.post("/sync/google")
 async def sync_google_calendar(
-    google_token: str,
+    google_token: str = Query(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
