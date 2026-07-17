@@ -196,7 +196,6 @@ async def _process_document(
                     import os
                     import tempfile
                     from pathlib import Path
-                    from app.ai.services import vision_service
 
                     is_url = storage_path.startswith("http://") or storage_path.startswith("https://")
                     local_pdf_path = ""
@@ -216,15 +215,14 @@ async def _process_document(
 
                     visuals = []
                     if doc.file_type == "pdf":
-                        visuals = vision_service.extract_visuals_from_pdf(local_pdf_path)
+                        visuals = await ai_client.extract_visuals_from_pdf(local_pdf_path)
                     elif doc.file_type in ("png", "jpg", "jpeg"):
                         if temp_file_path:
                             img_bytes = Path(temp_file_path).read_bytes()
                         else:
                             img_bytes = Path(local_pdf_path).read_bytes()
 
-                        compressed = vision_service.process_and_compress_image(img_bytes)
-                        b64_str = base64.b64encode(compressed).decode("utf-8")
+                        b64_str = await ai_client.compress_image(img_bytes)
                         visuals = [{"base64_image": b64_str, "page_number": 1}]
 
                     if temp_file_path and os.path.exists(temp_file_path):

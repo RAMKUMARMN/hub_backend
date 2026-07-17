@@ -103,6 +103,31 @@ class AIClient(Protocol):
         """Search the web and return formatted results."""
         ...
 
+    async def compress_image(self, image_bytes: bytes) -> str:
+        """Compress raw image bytes and return base64 encoded string."""
+        ...
+
+    async def extract_visuals_from_pdf(self, pdf_path: str) -> list[dict]:
+        """Extract visual elements (images or rendered pages) from a PDF file."""
+        ...
+
+    async def reinspect_pdf_page(
+        self,
+        pdf_path: str,
+        page_number: int,
+        specific_question: str,
+    ) -> str:
+        """Render and ask vision model QA about a specific PDF page."""
+        ...
+
+    async def vision_qa_image(
+        self,
+        base64_image: str,
+        question: str,
+    ) -> str:
+        """Ask a vision model QA about a base64 encoded image."""
+        ...
+
 
 _client: AIClient | None = None
 

@@ -1049,7 +1049,6 @@ async def _process_chat_message_and_stream(
                                                     from pathlib import Path
                                                     local_pdf_path = str(Path("uploads") / storage_path)
                                                 
-                                                from app.ai.services import vision_service
                                                 page_number = int(page_num) if page_num else 1
                                                 
                                                 if doc_obj.file_type in ("png", "jpg", "jpeg"):
@@ -1058,34 +1057,14 @@ async def _process_chat_message_and_stream(
                                                         img_bytes = Path(temp_file_path).read_bytes()
                                                     else:
                                                         img_bytes = Path(local_pdf_path).read_bytes()
-                                                    compressed = vision_service.process_and_compress_image(img_bytes)
-                                                    import base64
-                                                    b64_str = base64.b64encode(compressed).decode("utf-8")
                                                     
-                                                    prompt = (
-                                                        f"Look at this image. Answer the following question based on the visual contents: {specific_question}"
+                                                    b64_str = await ai_client.compress_image(img_bytes)
+                                                    tool_result = await ai_client.vision_qa_image(
+                                                        base64_image=b64_str,
+                                                        question=specific_question
                                                     )
-                                                    
-                                                    async with httpx.AsyncClient(timeout=300) as client:
-                                                        response = await client.post(
-                                                            f"{app_settings.ollama_base_url}/api/generate",
-                                                            json={
-                                                                "model": app_settings.ollama_vision_model,
-                                                                "prompt": prompt,
-                                                                "images": [b64_str],
-                                                                "stream": False,
-                                                                "think": False,
-                                                                "think": False,
-                                                                "options": {
-                                                                    "num_ctx": 4096,
-                                                                },
-                                                                "keep_alive": "10s",
-                                                            }
-                                                        )
-                                                        response.raise_for_status()
-                                                        tool_result = response.json().get("response", "").strip()
                                                 else:
-                                                    tool_result = await vision_service.reinspect_page(
+                                                    tool_result = await ai_client.reinspect_pdf_page(
                                                         pdf_path=local_pdf_path,
                                                         page_number=page_number,
                                                         specific_question=specific_question

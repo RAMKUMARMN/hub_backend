@@ -203,3 +203,60 @@ class RemoteAIClient(AIClient):
             )
             response.raise_for_status()
             return response.json()["result"]
+
+    async def compress_image(self, image_bytes: bytes) -> str:
+        """Compress raw image bytes via the AI microservice."""
+        async with self._get_client(timeout=60.0) as client:
+            files = {"file": ("image.jpg", image_bytes, "image/jpeg")}
+            response = await client.post(
+                "/api/v1/vision/compress",
+                files=files,
+            )
+            response.raise_for_status()
+            return response.json()["base64_image"]
+
+    async def extract_visuals_from_pdf(self, pdf_path: str) -> list[dict]:
+        """Extract visuals from PDF via the AI microservice."""
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/vision/extract_visuals",
+                json={"pdf_path": pdf_path},
+            )
+            response.raise_for_status()
+            return response.json()["visuals"]
+
+    async def reinspect_pdf_page(
+        self,
+        pdf_path: str,
+        page_number: int,
+        specific_question: str,
+    ) -> str:
+        """Ask vision model visual QA on a PDF page via the AI microservice."""
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/vision/reinspect",
+                json={
+                    "pdf_path": pdf_path,
+                    "page_number": page_number,
+                    "specific_question": specific_question,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["description"]
+
+    async def vision_qa_image(
+        self,
+        base64_image: str,
+        question: str,
+    ) -> str:
+        """Ask vision model QA on a base64 image via the AI microservice."""
+        async with self._get_client(timeout=120.0) as client:
+            response = await client.post(
+                "/api/v1/vision/qa",
+                json={
+                    "base64_image": base64_image,
+                    "question": question,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["description"]
