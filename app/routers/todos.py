@@ -16,7 +16,6 @@ from app.schemas.todo import (
     TodoResponse,
     UpdateTodoRequest,
 )
-from app.queue.producer import publish_notification_to_queue
 
 router = APIRouter(prefix="/todos", tags=["todos"])
 
@@ -51,29 +50,9 @@ async def create_todo(
     db.add(todo)
     await db.commit()
     await db.refresh(todo)
-
-    if todo.reminder_time:
-        try:
-            tokens = current_user.device_tokens or []
-            if not tokens:
-                tokens = [current_user.email or "no_token_fallback"]
-            for token in tokens:
-                await publish_notification_to_queue(
-                    channel="push",
-                    recipient=token,
-                    title="Todo Reminder",
-                    body=f"Reminder for your task '{todo.title}' due on {todo.due_date.isoformat() if todo.due_date else 'None'}.",
-                    message_type="todo_reminder",
-                    priority="medium",
-                    data={"todo_id": str(todo.id)},
-                )
-        except Exception:
-            pass
-
     await invalidate_dashboard_cache(current_user.id)
 
     return todo
-
 
 @router.put("/{todo_id}", response_model=TodoResponse)
 async def update_todo(

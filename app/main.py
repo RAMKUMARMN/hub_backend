@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
-from app.database import engine
+from app.database import Base, engine
 from app.models import *  # noqa: F401, F403 — ensures models are registered for Alembic
 from app.redis import redis_client
 
