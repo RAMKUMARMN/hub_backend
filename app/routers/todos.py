@@ -74,6 +74,7 @@ async def create_todo(
 
     return todo
 
+    return todo
 
 @router.put("/{todo_id}", response_model=TodoResponse)
 async def update_todo(
