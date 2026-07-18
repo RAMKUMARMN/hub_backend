@@ -433,7 +433,7 @@ async def _process_chat_message_and_stream(
                 select(Document.id).where(
                     Document.user_id == current_user.id,
                     Document.processed == True,
-                    (Document.session_id == None) | (Document.session_id == session_id),
+                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                 )
             )
             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
@@ -1114,7 +1114,7 @@ async def _process_chat_message_and_stream(
                                                 select(Document.id).where(
                                                     Document.user_id == current_user.id,
                                                     Document.processed == True,
-                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                                 )
                                             )
                                             allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
@@ -1154,7 +1154,7 @@ async def _process_chat_message_and_stream(
                                             select(Document).where(
                                                 Document.user_id == current_user.id,
                                                 Document.processed == True,
-                                                (Document.session_id == None) | (Document.session_id == session_id),
+                                                (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                             )
                                         )
                                         allowed_docs = allowed_docs_result.scalars().all()
@@ -1180,7 +1180,7 @@ async def _process_chat_message_and_stream(
                                                 select(Document).where(
                                                     Document.id == doc_id,
                                                     Document.user_id == current_user.id,
-                                                    (Document.session_id == None) | (Document.session_id == session_id),
+                                                    (Document.session_id.is_(None)) | (Document.session_id == session_id),
                                                 )
                                             )
                                             doc_obj = doc_res.scalar_one_or_none()
