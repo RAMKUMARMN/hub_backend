@@ -42,12 +42,12 @@ async def create_todo(
     db: AsyncSession = Depends(get_db),
 ):
     todo = Todo(
-    user_id=current_user.id,
-    title=body.title,
-    description=body.description,
-    due_date=body.due_date,
-    priority=body.priority,
-    reminder_time=body.reminder_time,
+        user_id=current_user.id,
+        title=body.title,
+        description=body.description,
+        due_date=body.due_date,
+        priority=body.priority,
+        reminder_time=body.reminder_time,
 )
 
     db.add(todo)
