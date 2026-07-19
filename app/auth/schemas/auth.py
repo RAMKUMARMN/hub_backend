@@ -19,7 +19,6 @@ class RegisterRequest(BaseModel):
     password: str
     full_name: str
     phone: str | None = None
-    device_token: str | None = None  # FCM/APNs push token
 
 
 class LoginRequest(BaseModel):

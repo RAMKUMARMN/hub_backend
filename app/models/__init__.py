@@ -14,8 +14,6 @@ from app.models.calendar import CalendarEvent
 from app.models.notes import Note
 from app.models.folder import DocumentFolder
 from app.models.subtask import TodoSubtask
-from app.models.poll import PollResponse
-from app.models.device import UserDevice
 
 __all__ = [
     "User",
@@ -35,8 +33,5 @@ __all__ = [
     "Role",
     "AuditLog",
     "SystemSettings",
-    "UserPreferences",
-    "PollResponse",
-    "UserDevice",
+    "UserPreferences"
 ]
-

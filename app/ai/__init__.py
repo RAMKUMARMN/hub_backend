@@ -15,8 +15,7 @@ Public API:
   RemoteAIClient    — HTTP proxy that forwards requests to the AI microservice
 """
 from app.ai.api.chat import router as chat_router
-from app.ai.client import AIClient
-from app.ai.dependencies import get_ai_client
+from app.ai.client import AIClient, get_ai_client
 from app.ai.remote_client import RemoteAIClient
 
 __all__ = [

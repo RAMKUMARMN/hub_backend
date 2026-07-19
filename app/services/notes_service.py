@@ -47,8 +47,12 @@ class NotesService:
         query = select(Note).where(Note.user_id == user_id).order_by(Note.created_at.desc())
         
         if tag:
-            # Postgres ARRAY overlap or contains check
-            query = query.where(Note.tags.any(tag))
+            if self.db.bind.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import ARRAY
+                from sqlalchemy import cast, String
+                query = query.where(cast(Note.tags, ARRAY(String)).contains([tag]))
+            else:
+                query = query.where(Note.tags.contains(tag))
         if pinned is not None:
             query = query.where(Note.is_pinned == pinned)
         if archived is not None:

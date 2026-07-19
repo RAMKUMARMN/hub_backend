@@ -2,6 +2,8 @@ import pytest
 import pytest_asyncio
 import uuid
 import json
+import os
+import asyncio
 from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import status
 from httpx import AsyncClient, ASGITransport
@@ -589,6 +591,7 @@ async def test_agentic_reinspection_fallback(authenticated_client):
                     "match_type": "semantic"
                 }
             ])
+            self.reinspect_pdf_page = AsyncMock(return_value="Crop yield for 2021: 15 tons per acre.")
             self.calls = 0
 
         async def chat_with_tools(self, messages, tools=None, think=True):
@@ -627,48 +630,44 @@ async def test_agentic_reinspection_fallback(authenticated_client):
     fake_ai = FakeAIClient()
     app.dependency_overrides[get_ai_client] = lambda: fake_ai
 
-    # Mock the reinspect_page call in vision_service
-    with patch("app.ai.services.vision_service.reinspect_page", new_callable=AsyncMock) as mock_reinspect:
-        mock_reinspect.return_value = "Crop yield for 2021: 15 tons per acre."
+    try:
+        # Call the chat endpoint with RAG enabled
+        response = await authenticated_client.post(
+            f"/api/v1/chat/sessions/{session_id}/messages",
+            json={
+                "content": "What was the crop yield in 2021 on page 3?",
+                "use_rag": True,
+            }
+        )
+        assert response.status_code == 200
 
-        try:
-            # Call the chat endpoint with RAG enabled
-            response = await authenticated_client.post(
-                f"/api/v1/chat/sessions/{session_id}/messages",
-                json={
-                    "content": "What was the crop yield in 2021 on page 3?",
-                    "use_rag": True,
-                }
-            )
-            assert response.status_code == 200
+        events = []
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                events.append(json.loads(data_str))
 
-            events = []
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    events.append(json.loads(data_str))
+        # Verify response content
+        assert len(events) > 0
+        # First event is source citations
+        assert "sources" in events[0]
+        
+        # Find the delta/response event
+        full_text = "".join(ev.get("delta", "") for ev in events if "delta" in ev)
+        assert "15 tons per acre" in full_text
 
-            # Verify response content
-            assert len(events) > 0
-            # First event is source citations
-            assert "sources" in events[0]
-            
-            # Find the delta/response event
-            full_text = "".join(ev.get("delta", "") for ev in events if "delta" in ev)
-            assert "15 tons per acre" in full_text
+        # Assertions on tool invocation
+        assert fake_ai.calls == 2
+        fake_ai.reinspect_pdf_page.assert_called_once_with(
+            pdf_path="uploads/documents/test/report.pdf",
+            page_number=3,
+            specific_question="What is the yield value for 2021?"
+        )
 
-            # Assertions on tool invocation
-            assert fake_ai.calls == 2
-            mock_reinspect.assert_called_once_with(
-                pdf_path="uploads/documents/test/report.pdf",
-                page_number=3,
-                specific_question="What is the yield value for 2021?"
-            )
-
-        finally:
-            app.dependency_overrides.pop(get_ai_client, None)
+    finally:
+        app.dependency_overrides.pop(get_ai_client, None)
 
 
 @pytest.mark.asyncio

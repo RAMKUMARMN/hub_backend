@@ -17,6 +17,17 @@ class RemoteAIClient(AIClient):
     def _get_client(self, timeout: float = 60.0) -> httpx.AsyncClient:
         return httpx.AsyncClient(base_url=settings.ai_service_url, timeout=timeout)
 
+    def _get_absolute_path(self, path: str) -> str:
+        from pathlib import Path
+        if not path or path.startswith("http://") or path.startswith("https://"):
+            return path
+        p = Path(path)
+        if p.is_absolute():
+            return str(p)
+        if path.startswith("uploads/") or path.startswith("uploads\\"):
+            return str(p.resolve())
+        return str((Path("uploads") / p).resolve())
+
     async def chat_stream(
         self,
         messages: list[dict],
@@ -182,10 +193,11 @@ class RemoteAIClient(AIClient):
         file_path: str,
         file_type: str,
     ) -> str:
+        abs_path = self._get_absolute_path(file_path)
         async with self._get_client(timeout=120.0) as client:
             response = await client.post(
                 "/api/v1/extract",
-                json={"file_path": file_path, "file_type": file_type},
+                json={"file_path": abs_path, "file_type": file_type},
             )
             response.raise_for_status()
             return response.json()["text"]
@@ -217,10 +229,11 @@ class RemoteAIClient(AIClient):
 
     async def extract_visuals_from_pdf(self, pdf_path: str) -> list[dict]:
         """Extract visuals from PDF via the AI microservice."""
+        abs_path = self._get_absolute_path(pdf_path)
         async with self._get_client(timeout=120.0) as client:
             response = await client.post(
                 "/api/v1/vision/extract_visuals",
-                json={"pdf_path": pdf_path},
+                json={"pdf_path": abs_path},
             )
             response.raise_for_status()
             return response.json()["visuals"]
@@ -232,11 +245,12 @@ class RemoteAIClient(AIClient):
         specific_question: str,
     ) -> str:
         """Ask vision model visual QA on a PDF page via the AI microservice."""
+        abs_path = self._get_absolute_path(pdf_path)
         async with self._get_client(timeout=120.0) as client:
             response = await client.post(
                 "/api/v1/vision/reinspect",
                 json={
-                    "pdf_path": pdf_path,
+                    "pdf_path": abs_path,
                     "page_number": page_number,
                     "specific_question": specific_question,
                 },

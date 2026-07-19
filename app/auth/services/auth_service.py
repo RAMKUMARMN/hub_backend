@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.repositories.user_repository import UserRepository
 from app.auth.security.password import hash_password, verify_password
-from app.auth.schemas.auth import RegisterRequest
+from app.auth.schemas.auth import RegisterRequest, TokenResponse
 from app.models.user import User
 from app.auth.utils.validators import is_valid_institutional_email
 
@@ -34,11 +34,6 @@ class AuthService:
                 detail="Email already registered",
             )
 
-        if not is_valid_institutional_email(body.email):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Only institutional emails are allowed",
-            )
 
         from app.config import settings
 

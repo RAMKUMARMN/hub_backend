@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 
 from app.config import settings
 
+settings.debug = False
+
 # Intercept DATABASE_URL to use the isolated test database
 original_url = settings.database_url
 

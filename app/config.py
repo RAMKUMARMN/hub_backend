@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     qdrant_collection: str = "user_documents"
     enable_reranker: bool = False
     reranker_model: str = "mixedbread-ai/mxbai-rerank-base-v1"
-    n8n_webhook_url: str = "http://localhost:5678/webhook/document-summary"
 
     # RabbitMQ
     rabbitmq_url: str
