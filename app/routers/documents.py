@@ -346,9 +346,6 @@ async def delete_document(
 
     # 3. Remove the metadata row from PostgreSQL.
     await db.delete(doc)
-<<<<<<< HEAD
-    await db.commit()
-=======
     await db.commit()
 
 @router.patch("/{document_id}/processed")
@@ -376,4 +373,3 @@ async def mark_document_processed(
         "status": "completed",
         "document_id": str(document_id),
     }
->>>>>>> 385393e (Complete RAG pipeline integration and docker support (#72))
