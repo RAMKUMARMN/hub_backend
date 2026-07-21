@@ -139,7 +139,6 @@ async def test_register_route_success(client):
         assert db_user is not None
         assert db_user.full_name == TEST_NAME
 
-
 @pytest.mark.asyncio
 async def test_register_route_duplicate_email(client):
     await client.post(

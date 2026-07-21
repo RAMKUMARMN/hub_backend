@@ -18,9 +18,6 @@ async def create_event(
     db: AsyncSession = Depends(get_db),
     x_google_token: str | None = Header(None)
 ):
-    # Write debug info to a log file
-    with open("/home/albin/Cixio/hub_backend/debug_token.log", "a") as f:
-        f.write(f"CREATE_EVENT called. x_google_token: {x_google_token}\n")
         
     event = await CalendarService(db).create_event(current_user.id, body, google_token=x_google_token)
 

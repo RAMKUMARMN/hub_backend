@@ -1,17 +1,17 @@
-"""update notifications table
+"""merge notification and chat migration heads
 
-Revision ID: a868832b7679
-Revises: 0002_poll_responses
-Create Date: 2026-06-17 02:28:31.655881
+Revision ID: a09b863dc465
+Revises: 6531a72e40ab, 3ad97c947a94
+Create Date: 2026-07-20 21:01:44.326718
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
-revision: str = 'a868832b7679'
-down_revision: Union[str, None] = '0002_poll_responses'
+
+revision: str = 'a09b863dc465'
+down_revision: Union[str, None] = ('6531a72e40ab', '3ad97c947a94')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

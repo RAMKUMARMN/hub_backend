@@ -11,7 +11,7 @@ router = APIRouter(
 
 
 @router.post("/")
-async def test_n8n(body: N8NRequest):
+async def trigger_n8n(body: N8NRequest):
 
     result = await trigger_n8n(
         task=body.task,

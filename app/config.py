@@ -74,10 +74,10 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 50
 
     # Test constants
-    test_email: str = ""
-    test_password: str = ""
-    test_name: str = ""
-    test_phone: str = ""
+    test_email: str = "test@tkmce.ac.in"
+    test_password: str = "Test@123"
+    test_name: str = "Test User"
+    test_phone: str = "9876543210"
 
     #cloudinary details
     cloudinary_cloud_name: str = ""

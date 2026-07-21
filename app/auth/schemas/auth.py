@@ -19,7 +19,6 @@ class RegisterRequest(BaseModel):
     password: str
     full_name: str
     phone: str | None = None
-    otp:str
 class PhoneRequest(BaseModel):
     phone: str
 

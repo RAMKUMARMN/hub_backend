@@ -1047,7 +1047,7 @@ async def _process_chat_message_and_stream(
                                                         local_pdf_path = temp_file_path
                                                 else:
                                                     from pathlib import Path
-                                                    local_pdf_path = str(Path("uploads") / storage_path)
+                                                    local_pdf_path = (Path("uploads") / storage_path).as_posix()
                                                 
                                                 page_number = int(page_num) if page_num else 1
                                                 
