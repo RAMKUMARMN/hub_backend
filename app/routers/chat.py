@@ -3,6 +3,7 @@ Chat router — /api/v1/chat/*
 
 Students: implement the streaming message endpoint (POST /sessions/{id}/messages).
 """
+
 import json
 import uuid
 
@@ -26,7 +27,9 @@ from app.services.llm_service import chat_stream
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-@router.post("/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/sessions", response_model=SessionResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_session(
     body: CreateSessionRequest,
     current_user: User = Depends(get_current_user),

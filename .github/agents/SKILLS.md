@@ -1,82 +1,134 @@
 ---
 name: backend-agent-skills
-description: Skills for the `hub_backend` assistant: FastAPI endpoint development, Alembic database migrations, service integration (RabbitMQ, Redis, Ollama, ChromaDB, MinIO), JWT auth, and safe backend maintenance. The agent helps maintainers set up and manage the backend API service in the repository, with a strong emphasis on safety and human oversight for production-impacting changes.
+description: Skills for the `hub_backend` assistant: FastAPI endpoints, SQLAlchemy models and Alembic migrations, service integrations (AI service proxy for LLM/RAG/document, local file storage), and safe backend maintenance. The coordinator routes requests to single-task agents.
 ---
+
 # Backend Agent — Skills Catalog
 
-This document describes the skills, inputs/outputs, tools, safety constraints, and example prompts the `backend-agent` (see `backend agent.agent.md`) supports for the `hub_backend` repository.
+This document describes the skills, inputs/outputs, tools, safety constraints, and example prompts the `backend-agent` (see `backend-agent.agent.md`) supports for the `hub_backend` repository.
 
 **Purpose**
 - Provide a compact, discoverable list of the agent's actionable capabilities so maintainers can quickly know what to ask and what to expect.
 
 **Quick summary**
-- **Primary domain:** FastAPI backend API (REST endpoints, database models, migrations, service integrations).
-- **Primary outputs:** repository patches/diffs, GitHub Actions workflow files, CI job templates, README snippets, and PR-ready descriptions.
+- **Primary domain:** FastAPI backend API (REST endpoints, SQLAlchemy models, Alembic migrations, AI service proxy for LLM/RAG/document, local file storage).
+- **Primary outputs:** repository patches/diffs, new router files, Pydantic schemas, SQLAlchemy models, Alembic migrations, service modules, CI workflow files, and PR-ready descriptions.
 - **Primary safety posture:** Prepare and validate code changes; never autonomously run database migrations or modify production data without explicit maintainer confirmation.
 
 ## Capabilities
 
-- Generate or update GitHub Actions workflows to run `ruff check`, `pytest`, and (when authorized) `alembic upgrade head`.
-- Create per-environment CI workflows or a single multi-environment workflow accepting an `environment` input (`dev`, `staging`, `prod`).
-- Configure Alembic migrations: generate revisions via `alembic revision --autogenerate`, review migration scripts, and apply with human gate for production.
-- Produce repository patches via `apply_patch` (small, focused edits) and provide diffs for review before applying.
-- Run static checks in CI: `ruff check .`, `pytest -q`, optional mypy integration.
-- Draft PR descriptions, risk notes, and post-deployment verification checklists.
-- Create a safe migration job template guarded by typed confirmation and restricted to manual dispatch.
+### API Endpoints (handled by `backend-routers` agent)
+- Create or update FastAPI endpoints in `app/routers/`
+- Pydantic v2 request/response schemas
+- Route registration in `app/main.py`
+- Authentication dependencies and error handling
+- httpx endpoint tests
+
+### Breaking Change Detection (handled by `backend-master-api-reviewer` agent)
+- Cross-reference schema/route changes against hub_mobile Dart models and hub_frontend TypeScript types
+- Detect field removals, renames, type changes, and optionality shifts
+- Flag `CRITICAL: BREAKING CHANGE` with client-side mock update snippets
+
+### Database Models & Migrations (handled by `backend-database` agent)
+- Create or update SQLAlchemy 2.0 async models
+- Alembic migration generation and review
+- Model relationships, indexes, constraints
+- Matching Pydantic schemas (Create, Read, Update, List)
+- **Database performance scanning** — N+1 detection, index analysis, migration impact review
+
+### Service Integrations (handled by `backend-integrations` agent)
+- Service layer business logic in `app/services/`
+- Auth service: JWT issue/verify, password hashing (`auth_service.py`)
+- LLM: AI service proxy for chat streaming and embeddings (`llm_service.py`)
+- RAG: AI service proxy for ingest/retrieve/delete (AI service wraps ChromaDB) (`rag_service.py`)
+- File storage: local filesystem (`storage_service.py`; S3 via `USE_S3=true`)
+- Document processing: AI service proxy for PDF, DOCX, image parsing (`document_service.py`)
+
+### Infrastructure Skills (reusable guides in `.agents/skills/`)
+- `fastapi-endpoint-setup` — FastAPI endpoint creation with schemas and tests
+- `sqlalchemy-model-migration` — SQLAlchemy models and Alembic migrations
+- `backend-service-integration` — Service layer and external integrations
+- `backend-ci-workflow` — GitHub Actions CI/CD workflow template
+- `pytest-setup` — Testing patterns for FastAPI
 
 ## Inputs the agent expects (ask if missing)
-- `environment` -- which environment to target: `dev`, `staging`, `prod`.
-- `database_url` or repo secret name `DATABASE_URL` -- database connection string.
-- `migration_message` -- descriptive message for the Alembic migration revision.
-- `secret_names` -- repo secret names for `SECRET_KEY`, `JWT_SECRET`, `RABBITMQ_URL`, `REDIS_URL`, `AWS_ACCESS_KEY_ID`, etc.
-- `notification` config -- repo secret name for `SLACK_WEBHOOK_URL` or `NOTIFICATION_EMAIL`.
+- `domain` — feature domain for the endpoint (e.g., `workspaces`, `chat`)
+- `model_name` — the SQLAlchemy model to create or modify
+- `integration_type` — which service to configure (llm, rag, storage, auth, document)
+- `migration_message` — descriptive message for the Alembic revision
 
 ## Outputs the agent produces
-- New or modified workflow YAML files in `/.github/workflows/` (e.g., `backend-ci.yml`).
-- New Python files (routers, models, schemas, services) or patches to existing ones.
-- README/docs snippets describing required secrets and how to run the service.
-- PR-ready changelog/summary and verification checklist.
-- Patches (diffs) applied with `apply_patch` when given explicit permission.
+- New or modified router files in `app/routers/`
+- SQLAlchemy models and Pydantic schemas
+- Alembic migration revisions
+- Service modules in `app/services/`
+- CI workflow YAML files in `/.github/workflows/`
+- Test files in `tests/`
+- README/docs snippets describing required environment variables
+- PR-ready changelog/summary and verification checklist
 
 ## Tools the agent uses
-- `apply_patch` -- create or update repo files (used only after human confirmation for impactful changes).
-- `read_file`, `file_search`, `grep_search` -- inspect repo layout and find Python modules or config files.
-- `manage_todo_list` -- track multi-step tasks and report progress back to the maintainer.
-- `run_in_terminal` -- only if explicitly requested; otherwise the agent outputs commands for maintainers to run locally or in CI.
+- Repository editing tools for making focused edits
+- File search and read tools to inspect repo layout and find relevant files
+- Progress tracking tools to manage multi-step tasks
 
 ## Safety, boundaries, and policies
 
-- Never request or accept raw secrets in chat messages. Instead, the agent asks for secret *names* (e.g., `DATABASE_URL`, `SECRET_KEY`) and instructs maintainers to set them in GitHub Secrets.
-- Never run `alembic upgrade head` against production without an explicit confirmation token: `CONFIRM_PROD_MIGRATION` (maintainer must provide this token before the agent takes any action that would modify production database schemas).
-- No direct production data access or modification outside migration workflows.
-- No automatic PR merging or repo-level approvals -- the agent drafts, explains, and optionally creates patches/PRs after explicit permission.
+- Never request or accept raw secrets in chat messages. Instead, ask for secret *names* (e.g., `DATABASE_URL`, `SECRET_KEY`) and instruct maintainers to set them in GitHub Secrets.
+- Never run `alembic upgrade head` against production without the confirmation token `CONFIRM_PROD_MIGRATION`.
+- No automatic PR merging or repo-level approvals — draft and explain only.
 
 ## Confirmation and escalation rules
-- Low-risk edits (formatting, docs, test additions): agent may apply patches after a single maintainer approval.
-- Medium-risk edits (new endpoints, model changes that do not affect production): require an explicit approval message before applying patches.
-- High-risk edits (changes that enable or run migrations in `prod`, alter database models, or modify authentication logic): require the typed confirmation `CONFIRM_PROD_MIGRATION` and a second acknowledgment (e.g., "I understand this will affect the production database").
+- Low-risk edits (formatting, docs, test additions): apply patches after a single maintainer approval.
+- Medium-risk edits (new endpoints, model changes that do not affect production): require explicit approval before applying.
+- High-risk edits (database migrations, auth changes, production-impacting config): require `CONFIRM_PROD_MIGRATION` and a second acknowledgment.
 
 ## Example prompts (how to ask the agent)
-- "Create a `backend-ci.yml` workflow that runs `ruff check` and `pytest` on push and PR; use `DATABASE_URL` repo secret; require approval for migration steps; post results to Slack via `SLACK_WEBHOOK_URL`."
-- "Add a `description` column to the `workspace` table with an Alembic migration -- show me the patch before applying."
-- "Draft a migration workflow that requires typed confirmation `CONFIRM_PROD_MIGRATION` and logs the operator who invoked it."
 
-## Typical workflows the agent supports
+### API Endpoints
+- "Add a `GET /api/v1/workspaces` endpoint that returns all workspaces for the authenticated user."
+- "Add pagination support to `GET /api/v1/notifications`."
 
-1. Discovery: scan repo for `app/routers/*`, `app/models/*`, `app/schemas/*`, and existing migration files.
-2. Draft: create a draft endpoint or migration with tests.
-3. Review: produce a PR description, risk summary, and required secrets docs.
-4. Apply (human-gated): upon confirmation, the agent can apply small, non-production patches or add CI steps; production migrations require `CONFIRM_PROD_MIGRATION`.
+### Database
+- "Add a `workspace` table with UUID PK, name, description, owner_id FK, and timestamps."
+- "Add an `avatar_url` column to the user model and generate a migration."
 
-## Error handling & troubleshooting behavior
-- If `ruff check` or `pytest` fails, the agent returns a concise diagnostics summary and suggests fixes.
-- If `alembic upgrade head` shows conflicts or missing dependencies, the agent highlights them, explains likely causes, and recommends manual inspection steps.
+### Service Integrations
+- "Add a streaming chat method to the LLM service that sends a prompt to the AI service."
+- "Set up local file storage for document uploads."
+- "Add a document parsing method that extracts text from PDFs via the AI service proxy."
+
+## Agent Architecture
+
+The coordinator (`backend-agent`) routes to single-task agents via a **strict thin coordinator** pattern:
+
+| Category | Agent | Responsibility | Cross-agent workflow |
+|---|---|---|---|
+| Scope/Structure | `backend-planner` | Implementation planning | — |
+| API Endpoints | `backend-routers` | FastAPI endpoints and Pydantic schemas | — |
+| Models/SQL | `backend-database` | SQLAlchemy models, Alembic migrations, **performance scans** | — |
+| External Services | `backend-integrations` | Service layer and external integrations | — |
+| Breaking Change Gatekeeper | `backend-master-api-reviewer` | Breaking change detection in routers/schemas against mobile + frontend contracts | Invoked directly or via coordinator |
+
+### Architectural Guardrails
+
+| Rule | Description |
+|---|---|
+| Thin coordinator | The coordinator NEVER implements, never holds state, never waits for results. All handoffs use `send: false`. |
+| DAG-only delegation | All agent communication flows in one direction. Circular calls (child → coordinator) are strictly forbidden. |
+| Max 2 concurrent agents | No more than two specialized agents may be active simultaneously. Queue excess requests. |
 
 ## How progress is reported
-- The agent uses `manage_todo_list` to break tasks into steps (discover -> draft -> patch -> verify) and will report the current step and completed steps in chat messages.
+- Each agent breaks tasks into steps and reports current/completed steps
 
-## Where to find the agent's configuration and prompts
-- Agent behavior is documented in `/.github/agents/backend agent.agent.md` and the repository prompt lives at `/.github/prompts/backend-prompt.prompt.md`.
+## Where to find configuration
+- Agent configs: `/.github/agents/*.agent.md`
+- Prompts: `/.github/prompts/*.prompt.md`
+- Skills: `/.agents/skills/*/SKILL.md`
+- Hooks: `/.github/hooks/*.json`
+- General guidelines: `/.github/copilot-instructions.md`
 
 ## Maintenance notes
-- Keep `SKILLS.md` aligned with `backend agent.agent.md` and `backend-prompt.prompt.md` -- update all three when adding new capabilities (for example, support for a new linter or a different test framework).
+- Keep `SKILLS.md` aligned with individual agent files and prompts
+- When adding a new skill, create `/.agents/skills/<name>/SKILL.md` and update this catalog
+- When adding a new single-task agent, create the agent file, prompt file, register it in the coordinator's handoffs, and add to `opencode.jsonc`

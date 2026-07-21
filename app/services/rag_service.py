@@ -10,6 +10,7 @@ The AI service (cixio-hub/ai, port 8003) handles:
 Students (AI/LLM role): implement the RAG pipeline in cixio-hub/ai.
 Students (Backend role): this file is already wired.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -82,4 +83,3 @@ async def delete_document_chunks(
             params={"user_id": str(user_id)},
         )
         response.raise_for_status()
-

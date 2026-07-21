@@ -1,4 +1,5 @@
 """Todos router — /api/v1/todos/*"""
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,7 +26,11 @@ async def list_todos(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Todo).where(Todo.user_id == current_user.id).order_by(Todo.created_at.desc())
+    query = (
+        select(Todo)
+        .where(Todo.user_id == current_user.id)
+        .order_by(Todo.created_at.desc())
+    )
     if completed is not None:
         query = query.where(Todo.completed == completed)
     result = await db.execute(query)

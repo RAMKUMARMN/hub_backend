@@ -13,7 +13,12 @@ from app.schemas.chat import (
     MessageResponse,
 )
 from app.schemas.document import DocumentResponse
-from app.schemas.todo import CreateTodoRequest, UpdateTodoRequest, CompleteToggleRequest, TodoResponse
+from app.schemas.todo import (
+    CreateTodoRequest,
+    UpdateTodoRequest,
+    CompleteToggleRequest,
+    TodoResponse,
+)
 
 __all__ = [
     "RegisterRequest",

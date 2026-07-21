@@ -10,6 +10,7 @@ The AI service (cixio-hub/ai, port 8003) handles:
 Students (AI/LLM role): implement extraction in cixio-hub/ai/app/rag/document_extractor.py
 Students (Backend role): this file is already wired.
 """
+
 from __future__ import annotations
 
 import httpx
@@ -37,4 +38,3 @@ async def extract_text(file_path: str, file_type: str) -> str:
         )
         response.raise_for_status()
         return response.json()["text"]
-
