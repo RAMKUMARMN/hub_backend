@@ -41,10 +41,23 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    ```
 
 3. **Set up environment variables:**
-   Create a `.env` file in the root directory (alongside `main.py`). If using Postgres, configure it like so:
+   Copy `.env.example` to `.env`:
+   * **Linux / macOS:**
+     ```bash
+     cp .env.example .env
+     ```
+   * **Windows (CMD / PowerShell):**
+     ```cmd
+     copy .env.example .env
+     ```
+
+   Configure `.env` settings:
    ```env
    DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/cixiohub
    REDIS_URL=redis://localhost:6379/0
+
+   # AI Microservice URL (hub_ai running on port 8003)
+   AI_SERVICE_URL=http://localhost:8003
    
    # Ollama configurations
    OLLAMA_BASE_URL=http://localhost:11434
@@ -66,17 +79,17 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    ```bash
    # Ubuntu/Debian: sudo apt install redis && sudo systemctl start redis
    # macOS: brew install redis && brew services start redis
-   # Docker: docker run -d -p 6379:6379 redis
+   # Windows (Docker): docker run -d -p 6379:6379 redis
    ```
 
 5. **Set up Qdrant Vector DB:**
    Start the Qdrant container locally to index and search vector embeddings:
    ```bash
-   docker run -d -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+   docker run -d --name local-qdrant -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
    ```
 
 6. **Set up Ollama & pull embedding/LLM models:**
-   Ensure Ollama is running and download the embedding model and LLM:
+   Ensure Ollama is running (`ollama serve`) and download the required models:
    ```bash
    # Pull the embedding model (used for vector storage)
    ollama pull nomic-embed-text
@@ -107,9 +120,11 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    ```
 
 9. **Start the Development Server:**
-   ```bash
-   uvicorn app.main:app --reload
-   ```
+   Start the backend server on port **8000**:
+   * **Linux / macOS / Windows:**
+     ```bash
+     uvicorn app.main:app --port 8000 --reload
+     ```
 
 ## Setup using Docker (FastAPI Web App Only)
 
