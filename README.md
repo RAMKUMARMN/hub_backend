@@ -53,23 +53,19 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
 
    Configure `.env` settings:
    ```env
-   DATABASE_URL=postgresql+asyncpg://cixiohub:cixiohub@localhost:5432/cixiohub
+   DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/cixiohub
    REDIS_URL=redis://localhost:6379/0
 
    # Security & Queue (Required)
-   SECRET_KEY=dev_secret_key_for_cixiohub_backend_token_signing_12345
+   SECRET_KEY=your_super_secret_jwt_key_here
    RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 
-   # AI Microservice URL (hub_ai running on port 8003)
-   USE_REMOTE_AI=True
-   AI_SERVICE_URL=http://localhost:8003
-   AI_API_KEY=1234
    # AI Microservice URL (hub_ai running on port 8003)
    AI_SERVICE_URL=http://localhost:8003
    
    # Ollama configurations
    OLLAMA_BASE_URL=http://localhost:11434
-   OLLAMA_MODEL=qwen3.5:4b
+   OLLAMA_MODEL=llama3.2:3b
    OLLAMA_EMBED_MODEL=nomic-embed-text
    
    # Qdrant configurations
