@@ -11,6 +11,7 @@ from app.routers.preferences import router as preferences_router
 from app.routers.system import router as system_router
 from app.routers.roles import router as roles_router
 from app.routers.dashboard import router as dashboard_router
+from app.routers.activity import router as activity_router
 
 __all__ = [
     "auth_router",
@@ -26,5 +27,6 @@ __all__ = [
     "system_router",
     "roles_router",
     "dashboard_router",
+    "activity_router",
 ]
 

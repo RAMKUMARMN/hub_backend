@@ -428,61 +428,91 @@ async def _process_chat_message_and_stream(
         try:
             # Retrieve processed documents that belong to current user
             # AND are either global (session_id IS NULL) OR belong to current session.
-            # This is the security boundary — documents from other sessions are never included.
+            # Session isolation is enforced — documents from other sessions are never included.
             allowed_docs_result = await db.execute(
-                select(Document.id).where(
+                select(Document).where(
                     Document.user_id == current_user.id,
                     Document.processed == True,
                     (Document.session_id == None) | (Document.session_id == session_id),
                 )
             )
-            allowed_doc_ids = [row[0] for row in allowed_docs_result.all()]
+            allowed_docs = allowed_docs_result.scalars().all()
+            allowed_doc_ids = [doc.id for doc in allowed_docs]
 
-            # If the user has selected specific documents, restrict to their selection.
-            # We intersect with allowed_doc_ids so that cross-session documents
-            # provided by the user are silently ignored — they will never appear.
+            target_docs = []
             if document_ids is not None:
                 allowed_set = set(allowed_doc_ids)
                 allowed_doc_ids = [d for d in document_ids if d in allowed_set]
-
-            # Check for generic visual queries referencing session assets
-            content_lower = content.lower().strip()
-            generic_visual_query = any(
-                phrase in content_lower
-                for phrase in (
-                    "this image", "this picture", "this photo",
-                    "attached image", "attached picture", "attached photo",
-                    "explain this", "what is this", "describe this", "what is in this"
-                )
-            )
+                target_docs = [doc for doc in allowed_docs if doc.id in set(allowed_doc_ids)]
 
             forced_image_data: list[dict] = []
-            if generic_visual_query:
-                # Find the most recently processed image/document in the active session
-                latest_image_result = await db.execute(
-                    select(Document)
-                    .where(
-                        Document.session_id == session_id,
-                        Document.processed == True,
-                        Document.file_type.in_(["png", "jpg", "jpeg", "pdf"])
+
+            # Case A: If user explicitly selected specific document_ids, check if any are images.
+            # Force-retrieve their image descriptions from Qdrant!
+            if target_docs:
+                image_target_ids = [
+                    doc.id for doc in target_docs
+                    if doc.file_type in ("png", "jpg", "jpeg", "pdf")
+                ]
+                if image_target_ids:
+                    for img_id in image_target_ids:
+                        img_chunks = await ai_client.search_relevant_chunks(
+                            user_id=current_user.id,
+                            query="image description visual content summary",
+                            limit=4,
+                            allowed_document_ids=[img_id],
+                            session_id=session_id,
+                            selected_document_ids=[img_id],
+                            use_reranker=False,
+                        )
+                        if img_chunks:
+                            forced_image_data.extend(
+                                [chunk for chunk in img_chunks if not chunk.get("is_meta")]
+                            )
+
+            # Case B: If no explicit image chunks loaded yet, check for generic visual queries referencing session assets
+            if not forced_image_data:
+                content_lower = content.lower().strip()
+                generic_visual_query = any(
+                    phrase in content_lower
+                    for phrase in (
+                        "this image", "this picture", "this photo",
+                        "the image", "the picture", "the photo",
+                        "attached image", "attached picture", "attached photo",
+                        "uploaded image", "uploaded picture", "uploaded photo",
+                        "explain this", "what is this", "describe this", "what is in this",
+                        "explain the image", "describe the image", "analyze the image",
+                        "explain image", "describe image", "analyze image",
+                        "look at this", "look at the image",
+                        "what does it show", "what does this show",
+                        "what can you see", "what do you see",
+                        "tell me about this", "tell me about the image",
+                        "read this", "read the image",
                     )
-                    .order_by(Document.created_at.desc())
-                    .limit(1)
                 )
-                latest_image = latest_image_result.scalar_one_or_none()
-                if latest_image:
-                    # Force retrieve descriptions/chunks from this specific document
-                    forced_image_data = await ai_client.search_relevant_chunks(
-                        user_id=current_user.id,
-                        query=content,
-                        limit=4,
-                        retrieval_mode=retrieval_mode,
-                        use_hyde=use_hyde,
-                        allowed_document_ids=[latest_image.id],
-                        session_id=session_id,
-                        selected_document_ids=[latest_image.id],
-                        use_reranker=use_reranker,
+                if generic_visual_query:
+                    latest_image_result = await db.execute(
+                        select(Document)
+                        .where(
+                            Document.user_id == current_user.id,
+                            (Document.session_id == session_id) | (Document.session_id == None),
+                            Document.processed == True,
+                            Document.file_type.in_(["png", "jpg", "jpeg", "pdf"])
+                        )
+                        .order_by(Document.created_at.desc())
+                        .limit(1)
                     )
+                    latest_image = latest_image_result.scalar_one_or_none()
+                    if latest_image:
+                        forced_image_data = await ai_client.search_relevant_chunks(
+                            user_id=current_user.id,
+                            query="image description visual content summary",
+                            limit=4,
+                            allowed_document_ids=[latest_image.id],
+                            session_id=session_id,
+                            selected_document_ids=[latest_image.id],
+                            use_reranker=False,
+                        )
 
             # Standard semantic search
             matching_data = await ai_client.search_relevant_chunks(
@@ -528,7 +558,15 @@ async def _process_chat_message_and_stream(
             logger.warning("Qdrant unavailable during RAG search for user %s.", current_user.id)
 
         if matching_data:
-            context = "\n\n".join(item["text"] for item in matching_data)
+            formatted_chunks = []
+            for item in matching_data:
+                fname = item.get("filename")
+                txt = item.get("text", "")
+                if fname:
+                    formatted_chunks.append(f"[File: {fname}]\n{txt}")
+                else:
+                    formatted_chunks.append(txt)
+            context = "\n\n".join(formatted_chunks)
             system_instruction = (
                 "You are an assistant answering questions using the following document context.\n"
                 "Answer based on the context. If the context does not contain the answer, "
@@ -540,10 +578,12 @@ async def _process_chat_message_and_stream(
                     f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
                 )
     else:
-        # Non-RAG mode: if specific document_ids are provided, read and append their full text directly as context
-        if document_ids:
-            try:
-                # Retrieve documents that belong to current user
+        # Non-RAG mode: handle explicit document_ids or generic visual queries for session images
+        try:
+            full_texts = []
+            
+            # 1. Handle explicitly provided document_ids
+            if document_ids:
                 allowed_docs_result = await db.execute(
                     select(Document).where(
                         Document.id.in_(document_ids),
@@ -552,36 +592,106 @@ async def _process_chat_message_and_stream(
                 )
                 allowed_docs = allowed_docs_result.scalars().all()
                 
-                full_texts = []
                 for doc in allowed_docs:
-                    doc_text = await ai_client.extract_text(doc.storage_path, doc.file_type)
-                    if doc_text.strip():
-                        # Truncate each document's text to a reasonable limit (e.g. 20,000 characters) to prevent token window overflow
-                        truncated_text = doc_text.strip()
-                        if len(truncated_text) > 20000:
-                            truncated_text = truncated_text[:20000] + "\n... [Truncated due to context window constraints] ..."
-                        full_texts.append(f"--- DOCUMENT: {doc.filename} ---\n{truncated_text}")
-                
-                if full_texts:
-                    context = "\n\n".join(full_texts)
-                    system_instruction = (
-                        "You are an assistant answering questions using the following document context.\n"
-                        "Answer based on the context. If the context does not contain the answer, "
-                        "say so clearly but still try to help based on general knowledge.\n\n"
-                        f"--- DOCUMENT CONTEXT ---\n{context}\n------------------------"
-                    )
-                    if session.summary:
-                        system_instruction += (
-                            f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
+                    if doc.file_type in ("png", "jpg", "jpeg"):
+                        # Extracting text directly from images returns empty string; fetch stored visual description
+                        image_chunks = await ai_client.search_relevant_chunks(
+                            user_id=current_user.id,
+                            query="image description visual content summary",
+                            limit=4,
+                            allowed_document_ids=[doc.id],
+                            use_reranker=False,
                         )
-            except Exception as exc:
-                logger.error("Failed to extract full text context in non-RAG mode: %s", exc)
+                        if image_chunks:
+                            img_text = "\n".join(chunk["text"] for chunk in image_chunks if "text" in chunk and not chunk.get("is_meta"))
+                            if img_text.strip():
+                                full_texts.append(f"--- IMAGE: {doc.filename} ---\n{img_text.strip()}")
+                    else:
+                        doc_text = await ai_client.extract_text(doc.storage_path, doc.file_type)
+                        if doc_text.strip():
+                            truncated_text = doc_text.strip()
+                            if len(truncated_text) > 20000:
+                                truncated_text = truncated_text[:20000] + "\n... [Truncated due to context window constraints] ..."
+                            full_texts.append(f"--- DOCUMENT: {doc.filename} ---\n{truncated_text}")
+
+            # 2. If no document context yet, check for generic visual queries referencing session images
+            content_lower = content.lower().strip()
+            generic_visual_query = any(
+                phrase in content_lower
+                for phrase in (
+                    "this image", "this picture", "this photo",
+                    "the image", "the picture", "the photo",
+                    "attached image", "attached picture", "attached photo",
+                    "uploaded image", "uploaded picture", "uploaded photo",
+                    "explain this", "what is this", "describe this", "what is in this",
+                    "explain the image", "describe the image", "analyze the image",
+                    "explain image", "describe image", "analyze image",
+                    "look at this", "look at the image",
+                    "what does it show", "what does this show",
+                    "what can you see", "what do you see",
+                    "tell me about this", "tell me about the image",
+                    "read this", "read the image",
+                )
+            )
+
+            if generic_visual_query and not full_texts:
+                latest_image_result = await db.execute(
+                    select(Document)
+                    .where(
+                        Document.user_id == current_user.id,
+                        (Document.session_id == session_id) | (Document.session_id == None),
+                        Document.processed == True,
+                        Document.file_type.in_(["png", "jpg", "jpeg", "pdf"])
+                    )
+                    .order_by(Document.created_at.desc())
+                    .limit(1)
+                )
+                latest_image = latest_image_result.scalar_one_or_none()
+                if latest_image:
+                    image_chunks = await ai_client.search_relevant_chunks(
+                        user_id=current_user.id,
+                        query="image description visual content summary",
+                        limit=4,
+                        allowed_document_ids=[latest_image.id],
+                        session_id=session_id,
+                        selected_document_ids=[latest_image.id],
+                        use_reranker=False,
+                    )
+                    if image_chunks:
+                        img_text = "\n".join(chunk["text"] for chunk in image_chunks if "text" in chunk and not chunk.get("is_meta"))
+                        if img_text.strip():
+                            full_texts.append(f"--- IMAGE: {latest_image.filename} ---\n{img_text.strip()}")
+
+            if full_texts:
+                context = "\n\n".join(full_texts)
+                system_instruction = (
+                    "You are an assistant answering questions using the following document context.\n"
+                    "Answer based on the context. If the context does not contain the answer, "
+                    "say so clearly but still try to help based on general knowledge.\n\n"
+                    f"--- DOCUMENT CONTEXT ---\n{context}\n------------------------"
+                )
+                if session.summary:
+                    system_instruction += (
+                        f"\n\n--- CONVERSATION SUMMARY ---\n{session.summary}\n----------------------------"
+                    )
+        except Exception as exc:
+            logger.error("Failed to extract context in non-RAG mode: %s", exc)
 
     # 6.4. Pre-compute has_visual_chunks so it can be used both here and in event_generator.
     has_visual_chunks = any(
-        "[Image Description" in item.get("text", "")
+        "[Image Description" in item.get("text", "") or "--- IMAGE:" in item.get("text", "")
         for item in matching_data
-    )
+    ) or (not use_rag and 'full_texts' in locals() and any("--- IMAGE:" in t for t in full_texts))
+
+    if has_visual_chunks:
+        system_instruction += (
+            "\n\nIMPORTANT VISUAL CONTEXT INSTRUCTION:\n"
+            "The context above includes detailed visual analysis descriptions of image(s) uploaded by the user. "
+            "You MUST treat these visual descriptions as the direct visual contents of the image. "
+            "Answer the user's question directly, describing and explaining what is in the image as if you are viewing it directly. "
+            "NEVER state that 'there is no image attached' or 'this is just a text description'. "
+            "Respond naturally as a helpful visual assistant explaining the user's image."
+        )
 
     # 6.5. Inject thinking mode instruction.
     if thinking_mode:

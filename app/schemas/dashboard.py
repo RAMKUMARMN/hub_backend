@@ -49,3 +49,8 @@ class DashboardResponse(BaseModel):
     achievements: list[AchievementItem]
     activity_feed: list[ActivityFeedItem]
     weekly_stats: WeeklyStats
+    tasks_due: int
+    notes_count: int
+    events_count: int
+    chat_sessions: int
+    focus_sessions: int

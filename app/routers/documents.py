@@ -155,6 +155,7 @@ async def _process_document(
             print(f"[Ingestion] Extracting text content from '{filename}' ({doc.file_type})...")
             text = await ai_client.extract_text(storage_path, doc.file_type)
 
+            chunks_stored = 0
             if not use_rag:
                 print(f"[Ingestion] Direct LLM mode: skipping Qdrant indexing for '{filename}'")
                 logger.info(
@@ -189,6 +190,7 @@ async def _process_document(
                     )
 
             # Vision RAG processing for images/PDFs
+            images_stored = 0
             if use_rag and settings.enable_vision_rag:
                 try:
                     import base64
@@ -252,10 +254,13 @@ async def _process_document(
                         exc_info=True,
                     )
 
-            # Mark the document as ready for RAG queries.
-            doc.processed = True
-            await db.commit()
-            print(f"[Ingestion] <<< Finished processing for file: '{filename}' (ID: {document_id})\n")
+            # Mark document as processed if text/vision vectors were successfully stored (or direct LLM mode was chosen)
+            if not use_rag or chunks_stored > 0 or images_stored > 0 or text.strip():
+                doc.processed = True
+                await db.commit()
+                print(f"[Ingestion] <<< Finished processing for file: '{filename}' (ID: {document_id})\n")
+            else:
+                print(f"[Ingestion] <<< Processing incomplete for file: '{filename}' (ID: {document_id}). Leaving processed=False.\n")
 
         except Exception as exc:
             logger.error(

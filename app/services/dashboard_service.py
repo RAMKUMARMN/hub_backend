@@ -9,6 +9,8 @@ from app.models.todo import Todo
 from app.models.focus import FocusSession, Achievement, UserAchievement
 from app.models.calendar import CalendarEvent as Event
 from app.models.audit_log import AuditLog
+from app.models.notes import Note
+from app.models.chat import ChatSession
 
 
 async def invalidate_dashboard_cache(user_id: uuid.UUID):
@@ -39,6 +41,19 @@ class DashboardService:
         activity_feed = await self._get_activity_feed(user_id)
         weekly_stats = await self._get_weekly_stats(user_id)
 
+        notes_count = await self._get_notes_count(user_id)
+        chat_sessions = await self._get_chat_sessions_count(user_id)
+
+        today_end = datetime.utcnow().replace(hour=23, minute=59, second=59, microsecond=999999)
+        tasks_due_res = await self.db.execute(
+            select(func.count(Todo.id)).where(
+                Todo.user_id == user_id,
+                Todo.completed == False,
+                Todo.due_date <= today_end
+            )
+        )
+        tasks_due = tasks_due_res.scalar() or 0
+
         response = {
             "todos": todos,
             "focus": focus,
@@ -46,6 +61,11 @@ class DashboardService:
             "achievements": achievements,
             "activity_feed": activity_feed,
             "weekly_stats": weekly_stats,
+            "tasks_due": tasks_due,
+            "notes_count": notes_count,
+            "events_count": calendar.get("today_events", 0),
+            "chat_sessions": chat_sessions,
+            "focus_sessions": focus.get("sessions_this_week", 0),
         }
 
         await redis_client.setex(
@@ -221,3 +241,22 @@ class DashboardService:
             "focus_trend": focus_trend,
             "task_completion_rate": task_completion_rate,
         }
+
+    async def _get_notes_count(self, user_id):
+        week_start = datetime.utcnow() - timedelta(days=7)
+        notes_res = await self.db.execute(
+            select(func.count(Note.id)).where(
+                Note.user_id == user_id,
+                Note.is_archived == False,
+                Note.created_at >= week_start,
+            )
+        )
+        return notes_res.scalar() or 0
+
+    async def _get_chat_sessions_count(self, user_id):
+        chat_res = await self.db.execute(
+            select(func.count(ChatSession.id)).where(
+                ChatSession.user_id == user_id
+            )
+        )
+        return chat_res.scalar() or 0

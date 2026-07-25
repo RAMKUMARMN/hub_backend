@@ -7,6 +7,7 @@ from app.auth.security.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.notes import CreateNoteRequest, UpdateNoteRequest, NoteResponse, ShareNoteRequest
 from app.services.notes_service import NotesService
+from app.services.dashboard_service import invalidate_dashboard_cache
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 
@@ -16,7 +17,9 @@ async def create_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await NotesService(db).create_note(current_user.id, body)
+    note = await NotesService(db).create_note(current_user.id, body)
+    await invalidate_dashboard_cache(current_user.id)
+    return note
 
 @router.get("/", response_model=list[NoteResponse])
 async def list_notes(
@@ -51,7 +54,9 @@ async def update_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await NotesService(db).update_note(note_id, current_user.id, body)
+    note = await NotesService(db).update_note(note_id, current_user.id, body)
+    await invalidate_dashboard_cache(current_user.id)
+    return note
 
 @router.delete("/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_note(
@@ -60,6 +65,7 @@ async def delete_note(
     db: AsyncSession = Depends(get_db)
 ):
     await NotesService(db).delete_note(note_id, current_user.id)
+    await invalidate_dashboard_cache(current_user.id)
 
 @router.post("/{note_id}/share", response_model=NoteResponse)
 async def share_note(

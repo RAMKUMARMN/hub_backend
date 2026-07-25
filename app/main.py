@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
 from fastapi_limiter import FastAPILimiter
 from app.auth.api.oauth_routes import router as oauth_router
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
@@ -24,6 +26,7 @@ from app.routers import (
     notes_router,
     folders_router,
     dashboard_router,
+    activity_router,
 )
 
 @asynccontextmanager
@@ -93,10 +96,15 @@ app.include_router(calendar_router, prefix=PREFIX)
 app.include_router(notes_router, prefix=PREFIX)
 app.include_router(folders_router, prefix=PREFIX)
 app.include_router(dashboard_router, prefix=PREFIX)
+app.include_router(activity_router, prefix=PREFIX)
 
 app.include_router(preferences_router, prefix=PREFIX)
 app.include_router(system_router, prefix=PREFIX)
 app.include_router(roles_router, prefix=PREFIX)
+
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 @app.get("/")
 async def home():

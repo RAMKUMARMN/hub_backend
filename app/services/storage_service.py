@@ -64,7 +64,8 @@ async def save_file(
     user_dir.mkdir(parents=True, exist_ok=True)
     dest = user_dir / unique_name
     dest.write_bytes(file_bytes)
-    return str(dest.relative_to(UPLOAD_DIR))
+    rel_path = dest.relative_to(UPLOAD_DIR).as_posix()
+    return f"/uploads/{rel_path}"
 
 
 async def delete_file(storage_path: str) -> None:
@@ -101,7 +102,10 @@ async def delete_file(storage_path: str) -> None:
 
     # Local file deletion fallback
     try:
-        path = UPLOAD_DIR / storage_path
+        clean_path = storage_path.lstrip("/")
+        if clean_path.startswith("uploads/"):
+            clean_path = clean_path[len("uploads/"):]
+        path = UPLOAD_DIR / clean_path
         if path.exists() and path.is_file():
             path.unlink()
     except Exception as exc:

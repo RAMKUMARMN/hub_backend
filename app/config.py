@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # AI Service — handles LLM, RAG, document extraction
     ai_service_url: str = "http://localhost:8003"
+    ai_api_key: str | None = None
 
     # Notify Service
     notify_service_url: str = "http://localhost:8001"
