@@ -64,6 +64,8 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
    USE_REMOTE_AI=True
    AI_SERVICE_URL=http://localhost:8003
    AI_API_KEY=1234
+   # AI Microservice URL (hub_ai running on port 8003)
+   AI_SERVICE_URL=http://localhost:8003
    
    # Ollama configurations
    OLLAMA_BASE_URL=http://localhost:11434
