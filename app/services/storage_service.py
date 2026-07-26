@@ -65,7 +65,7 @@ async def save_file(
     dest = user_dir / unique_name
     dest.write_bytes(file_bytes)
     rel_path = dest.relative_to(UPLOAD_DIR).as_posix()
-    return f"/uploads/{rel_path}"
+    return rel_path
 
 
 async def delete_file(storage_path: str) -> None:
