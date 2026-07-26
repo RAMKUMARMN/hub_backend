@@ -1039,8 +1039,8 @@ async def _process_chat_message_and_stream(
 
         if tools:
             try:
-                # Execute up to 10 sequential tool call turns
-                max_turns = 10
+                # Execute up to 20 sequential tool call turns
+                max_turns = 20
                 turns_used = 0
                 search_count = 0
                 executed_tool_calls = set()
@@ -1089,7 +1089,7 @@ async def _process_chat_message_and_stream(
                             executed_tool_calls.add(call_key)
                         
                         if has_duplicate:
-                            direct_content = response_msg.get("content", "")
+                            direct_content = response_msg.get("content", "") or response_msg.get("thinking", "")
                             break
 
                         # Append the assistant's message with tool calls to the history
@@ -1631,8 +1631,11 @@ async def _process_chat_message_and_stream(
                     else:
                         # No tool calls, the model has finished reasoning.
                         raw_content = response_msg.get("content", "")
+                        thinking_content = response_msg.get("thinking", "")
                         if raw_content and raw_content.strip():
                             direct_content = raw_content
+                        elif thinking_content and thinking_content.strip() and executed_tool_calls:
+                            direct_content = thinking_content
                         else:
                             direct_content = None
                         break
@@ -1682,6 +1685,20 @@ async def _process_chat_message_and_stream(
                     else:
                         full_response += content_text
                     yield f"data: {json.dumps({event_type: content_text})}\n\n"
+
+            # Fallback: if full_response is empty after tools execution, construct summary
+            if not full_response.strip() and executed_tool_calls:
+                if full_thinking.strip():
+                    fallback_msg = full_thinking.strip()
+                else:
+                    action_list = [f"- Executed `{func}`" for func, _ in executed_tool_calls]
+                    fallback_msg = "Successfully completed your requested actions:\n" + "\n".join(action_list)
+                full_response = fallback_msg
+                for event_type, content_text in parser.feed(fallback_msg):
+                    if event_type == "thinking":
+                        full_thinking += content_text
+                    else:
+                        yield f"data: {json.dumps({event_type: content_text})}\n\n"
 
         except httpx.ConnectError:
             error_msg = (

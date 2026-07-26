@@ -536,10 +536,8 @@ async def test_automatic_session_image_recall(authenticated_client):
         # Verify that search_relevant_chunks was called with allowed_document_ids set specifically to our image_doc_id
         fake_ai.search_relevant_chunks.assert_any_call(
             user_id=user_id,
-            query="explain this image",
+            query="image description visual content summary",
             limit=4,
-            retrieval_mode="semantic",
-            use_hyde=False,
             allowed_document_ids=[image_doc_id],
             session_id=session_id,
             selected_document_ids=[image_doc_id],
