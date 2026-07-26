@@ -1631,11 +1631,16 @@ async def _process_chat_message_and_stream(
                     else:
                         # No tool calls, the model has finished reasoning.
                         raw_content = response_msg.get("content", "")
+<<<<<<< HEAD
                         thinking_content = response_msg.get("thinking", "")
                         if raw_content and raw_content.strip():
                             direct_content = raw_content
                         elif thinking_content and thinking_content.strip() and executed_tool_calls:
                             direct_content = thinking_content
+=======
+                        if raw_content and raw_content.strip():
+                            direct_content = raw_content
+>>>>>>> dbf4c90 (fixed ai by fixing trailing slash and fixed authentication bug)
                         else:
                             direct_content = None
                         break
