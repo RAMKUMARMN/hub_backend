@@ -24,6 +24,9 @@ class RemoteAIClient(AIClient):
         from pathlib import Path
         if not path or path.startswith("http://") or path.startswith("https://"):
             return path
+        # Strip leading /uploads/ prefix from paths stored by older save_file
+        if path.startswith("/uploads/"):
+            path = path[len("/uploads/"):]
         p = Path(path)
         if p.is_absolute():
             return str(p)

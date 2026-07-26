@@ -213,7 +213,10 @@ async def _process_document(
                             temp_file_path = temp_file.name
                             local_pdf_path = temp_file_path
                     else:
-                        local_pdf_path = str(Path("uploads") / storage_path)
+                        clean_path = storage_path
+                        if clean_path.startswith("/uploads/"):
+                            clean_path = clean_path[len("/uploads/"):]
+                        local_pdf_path = str(Path("uploads") / clean_path)
 
                     visuals = []
                     if doc.file_type == "pdf":
@@ -308,7 +311,10 @@ async def download_document(
     if doc.storage_path.startswith("http://") or doc.storage_path.startswith("https://"):
         return RedirectResponse(doc.storage_path)
 
-    file_path = os.path.join("uploads", doc.storage_path)
+    clean_storage = doc.storage_path
+    if clean_storage.startswith("/uploads/"):
+        clean_storage = clean_storage[len("/uploads/"):]
+    file_path = os.path.join("uploads", clean_storage)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found on disk")
 
