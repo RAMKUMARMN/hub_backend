@@ -1627,8 +1627,11 @@ async def _process_chat_message_and_stream(
                             ollama_messages.append(tool_msg)
                     else:
                         # No tool calls, the model has finished reasoning.
-                        # The thinking was already streamed above, so we only need to stream content.
-                        direct_content = response_msg.get("content", "")
+                        raw_content = response_msg.get("content", "")
+                        if raw_content and raw_content.strip():
+                            direct_content = raw_content
+                        else:
+                            direct_content = None
                         break
 
                 logger.info("🛠️ Tool calling loop finished. Total turns used: %d", turns_used)
