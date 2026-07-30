@@ -11,10 +11,9 @@ Integrations:
 import uuid
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status, Form
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.database import AsyncSessionLocal, get_db
 from app.auth.security.dependencies import get_current_user
 from app.models.document import Document
@@ -23,7 +22,7 @@ from app.models.user import User
 from app.schemas.document import DocumentResponse
 from app.services.storage_service import delete_file, save_file
 from app.config import settings
-
+from app.models.workspace import Workspace
 from app.ai.client import AIClient, get_ai_client
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,8 @@ ALLOWED_TYPES = {
 async def upload_document(
     file: UploadFile,
     background_tasks: BackgroundTasks,
-    session_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = Form(None),
+    workspace_id: uuid.UUID | None = Form(None),
     use_rag: bool = True,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -82,6 +82,20 @@ async def upload_document(
         if not session_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Chat session not found")
 
+    if workspace_id is not None:
+        workspace_result = await db.execute(
+            select(Workspace).where(
+                Workspace.id == workspace_id,
+                Workspace.owner_id == current_user.id,
+            )
+        )
+
+        if workspace_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Workspace not found",
+            )
+
     storage_path = await save_file(contents, file.filename, current_user.id)
     file_type = ALLOWED_TYPES[file.content_type]
 
@@ -104,6 +118,7 @@ async def upload_document(
     doc = Document(
         user_id=current_user.id,
         session_id=session_id,
+        workspace_id=workspace_id,
         filename=file.filename,
         file_type=file_type,
         file_size=len(contents),
@@ -116,7 +131,14 @@ async def upload_document(
 
     # Fire-and-forget: extract text, embed, and store in Qdrant (if use_rag is True).
     background_tasks.add_task(
-        _process_document, doc.id, storage_path, current_user.id, file.filename, session_id, ai_client, use_rag
+        _process_document,
+        doc.id,
+        storage_path,
+        current_user.id,
+        file.filename,
+        session_id,
+        ai_client,
+        use_rag,
     )
 
     return doc
@@ -273,15 +295,27 @@ async def _process_document(
 
 @router.get("/", response_model=list[DocumentResponse])
 async def list_documents(
+    workspace_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all documents belonging to the current authenticated user."""
-    result = await db.execute(
+
+    query = (
         select(Document)
         .where(Document.user_id == current_user.id)
-        .order_by(Document.created_at.desc())
     )
+
+    if workspace_id:
+        query = query.where(
+            Document.workspace_id == workspace_id
+        )
+
+    query = query.order_by(
+        Document.created_at.desc()
+    )
+
+    result = await db.execute(query)
+
     return result.scalars().all()
 
 

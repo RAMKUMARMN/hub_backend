@@ -1,6 +1,5 @@
-import uuid
 from datetime import datetime
-
+import uuid
 from sqlalchemy import Uuid, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.user import ArrayType
@@ -29,4 +28,15 @@ class Note(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
+    workspace_id = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     user = relationship("User")
+
+    workspace = relationship(
+        "Workspace",
+        back_populates="notes",
+    )

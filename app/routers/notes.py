@@ -24,12 +24,22 @@ async def create_note(
 @router.get("/", response_model=list[NoteResponse])
 async def list_notes(
     tag: str | None = Query(None, description="Filter notes by tag"),
+    workspace_id: uuid.UUID | None = Query(
+        None,
+        description="Filter notes by workspace"
+    ),
     pinned: bool | None = Query(None, description="Filter notes by pinned status"),
     archived: bool | None = Query(None, description="Filter notes by archived status"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await NotesService(db).list_notes(current_user.id, tag, pinned, archived)
+    return await NotesService(db).list_notes(
+    current_user.id,
+    tag,
+    workspace_id,
+    pinned,
+    archived,
+)
 
 @router.get("/search", response_model=list[NoteResponse])
 async def search_notes(

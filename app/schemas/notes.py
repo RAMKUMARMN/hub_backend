@@ -9,6 +9,7 @@ class CreateNoteRequest(BaseModel):
     tags: list[str] = Field(default_factory=list, description="List of tags associated with the note")
     is_pinned: bool = Field(False, description="Whether the note is pinned")
     is_archived: bool = Field(False, description="Whether the note is archived")
+    workspace_id: uuid.UUID | None = None
 
 
 class UpdateNoteRequest(BaseModel):
@@ -17,6 +18,7 @@ class UpdateNoteRequest(BaseModel):
     tags: list[str] | None = Field(None)
     is_pinned: bool | None = Field(None)
     is_archived: bool | None = Field(None)
+    workspace_id: uuid.UUID | None = None
 
 
 class ShareNoteRequest(BaseModel):
@@ -33,5 +35,5 @@ class NoteResponse(BaseModel):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
-
+    workspace_id: uuid.UUID | None
     model_config = {"from_attributes": True}

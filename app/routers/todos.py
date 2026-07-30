@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
-
+from app.models.workspace import Workspace
 from app.config import settings
 from app.database import get_db
 from app.auth.security.dependencies import get_current_user
@@ -29,10 +29,25 @@ router = APIRouter(prefix="/todos", tags=["todos"])
 @router.get("/", response_model=list[TodoResponse])
 async def list_todos(
     completed: bool | None = None,
+    workspace_id: uuid.UUID | None = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(Todo).where(Todo.user_id == current_user.id).order_by(Todo.created_at.desc())
+    query = select(Todo).where(
+        Todo.user_id == current_user.id
+    )
+
+    if workspace_id is not None:
+        query = query.where(
+            Todo.workspace_id == workspace_id
+        )
+
+    if completed is not None:
+        query = query.where(
+            Todo.completed == completed
+        )
+
+    query = query.order_by(Todo.created_at.desc())
     if completed is not None:
         query = query.where(Todo.completed == completed)
     result = await db.execute(query)
@@ -45,6 +60,19 @@ async def create_todo(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if body.workspace_id is not None:
+        workspace = await db.scalar(
+            select(Workspace).where(
+                Workspace.id == body.workspace_id,
+                Workspace.owner_id == current_user.id,
+            )
+        )
+
+        if workspace is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace not found",
+            )
     todo = Todo(
         user_id=current_user.id,
         title=body.title,
@@ -52,7 +80,8 @@ async def create_todo(
         due_date=body.due_date,
         priority=body.priority,
         reminder_time=body.reminder_time,
-        reminder_sent=False
+        reminder_sent=False,
+        workspace_id=body.workspace_id,
     )
 
     db.add(todo)
@@ -120,6 +149,22 @@ async def update_todo(
         todo.due_date = body.due_date
     if body.priority is not None:
         todo.priority = body.priority
+
+    if body.workspace_id is not None:
+        workspace = await db.scalar(
+            select(Workspace).where(
+                Workspace.id == body.workspace_id,
+                Workspace.owner_id == current_user.id,
+            )
+        )
+
+        if workspace is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Workspace not found",
+            )
+
+    todo.workspace_id = body.workspace_id
     old_reminder = todo.reminder_time
     if body.reminder_time is not None:
         todo.reminder_time = body.reminder_time

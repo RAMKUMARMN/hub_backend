@@ -146,6 +146,4 @@ async def get_workspace_summary(
             detail="Workspace not found",
         )
 
-    return {
-        "summary": summary
-    }
+    return summary

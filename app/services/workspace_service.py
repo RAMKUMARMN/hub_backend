@@ -1,10 +1,13 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workspace import Workspace
 from app.schemas.workspace import WorkspaceCreate, WorkspaceUpdate, WorkspaceSummary
+from app.models.document import Document
+from app.models.notes import Note
+from app.models.todo import Todo
 
 
 class WorkspaceService:
@@ -110,16 +113,46 @@ class WorkspaceService:
         if workspace is None:
             return None
 
-        # These values will be replaced with actual counts once
-        # Documents, Notes and Todos are linked to Workspace.
+        documents = await self.db.scalar(
+            select(func.count(Document.id)).where(
+                Document.workspace_id == workspace_id
+            )
+        )
+
+        notes = await self.db.scalar(
+            select(func.count(Note.id)).where(
+                Note.workspace_id == workspace_id
+            )
+        )
+
+        todos = await self.db.scalar(
+            select(func.count(Todo.id)).where(
+                Todo.workspace_id == workspace_id
+            )
+        )
+
+        completed_todos = await self.db.scalar(
+            select(func.count(Todo.id)).where(
+                Todo.workspace_id == workspace_id,
+                Todo.completed.is_(True),
+            )
+        )
+
+        pending_todos = await self.db.scalar(
+            select(func.count(Todo.id)).where(
+                Todo.workspace_id == workspace_id,
+                Todo.completed.is_(False),
+            )
+        )
 
         return WorkspaceSummary(
             workspace_id=workspace.id,
             workspace_name=workspace.name,
-            documents=0,
-            notes=0,
-            todos=0,
-            completed_todos=0,
-            pending_todos=0,
+            documents=documents or 0,
+            notes=notes or 0,
+            todos=todos or 0,
+            completed_todos=completed_todos or 0,
+            pending_todos=pending_todos or 0,
         )
+        
         

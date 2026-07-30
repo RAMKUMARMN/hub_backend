@@ -65,3 +65,18 @@ class Workspace(Base):
     )
 
     owner = relationship("User", back_populates="workspaces")
+
+    documents = relationship(
+        "Document",
+        back_populates="workspace",
+    )
+
+    notes = relationship(
+        "Note",
+        back_populates="workspace",
+    )
+
+    todos = relationship(
+        "Todo",
+        back_populates="workspace",
+    )

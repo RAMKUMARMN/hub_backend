@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -14,6 +15,7 @@ class CreateTodoRequest(BaseModel):
     due_date: datetime | None = None
     priority: TodoPriority = "medium"
     reminder_time: datetime | None = None
+    workspace_id: uuid.UUID | None = None
 
 
 class UpdateTodoRequest(BaseModel):
@@ -22,6 +24,7 @@ class UpdateTodoRequest(BaseModel):
     due_date: datetime |None = None
     priority: TodoPriority | None = None
     reminder_time: datetime | None = None
+    workspace_id: uuid.UUID | None = None
 
 
 class CompleteToggleRequest(BaseModel):
@@ -43,3 +46,4 @@ class TodoResponse(BaseModel):
     subtasks: list[SubtaskResponse] = []
     created_at: datetime
     updated_at: datetime
+    workspace_id: uuid.UUID | None

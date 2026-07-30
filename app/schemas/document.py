@@ -7,6 +7,7 @@ from pydantic import BaseModel
 class DocumentResponse(BaseModel):
     id: uuid.UUID
     session_id: uuid.UUID | None = None
+    workspace_id: uuid.UUID | None = None
     filename: str
     file_type: str
     file_size: int
