@@ -12,6 +12,8 @@ from app.routers.system import router as system_router
 from app.routers.roles import router as roles_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.activity import router as activity_router
+from app.routers.workspace import router as workspace_router
+
 
 __all__ = [
     "auth_router",
@@ -28,5 +30,6 @@ __all__ = [
     "roles_router",
     "dashboard_router",
     "activity_router",
+    "workspace_router",
 ]
 

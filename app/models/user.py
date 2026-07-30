@@ -4,8 +4,9 @@ from datetime import datetime
 from sqlalchemy import Uuid, Boolean, DateTime, String, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
-
+from sqlalchemy.orm import relationship
 from app.database import Base
+
 
 
 class ArrayType(TypeDecorator):
@@ -48,3 +49,13 @@ class User(Base):
         DateTime(timezone=True),
         nullable=True
     )
+
+    workspaces = relationship(
+    "Workspace",
+    back_populates="owner",
+    cascade="all, delete-orphan",
+)
+
+
+
+
