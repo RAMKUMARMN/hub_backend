@@ -33,8 +33,9 @@ COPY . .
 # Ensure entrypoint script is executable
 RUN chmod +x /app/scripts/entrypoint.sh
 
-# Create a non-privileged user and group to run the app securely
-RUN groupadd -g 10001 appgroup && \
+# Create uploads folder and a non-privileged user and group to run the app securely
+RUN mkdir -p /app/uploads && \
+    groupadd -g 10001 appgroup && \
     useradd -r -u 10001 -g appgroup appuser && \
     chown -R appuser:appgroup /app
 
