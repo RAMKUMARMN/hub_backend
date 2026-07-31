@@ -1208,7 +1208,8 @@ async def _process_chat_message_and_stream(
                                     else:
                                         search_count += 1
                                         # Yield status update to frontend
-                                        yield f"data: {json.dumps({'status': f'🔍 Searching the web for \"{query_arg}\"...'})}\n\n"
+                                        status_text = f'🔍 Searching the web for "{query_arg}"...'
+                                        yield f"data: {json.dumps({'status': status_text})}\n\n"
                                         try:
                                             tool_result = await ai_client.web_search(query_arg, max_results=5)
                                         except Exception as e:
@@ -1220,7 +1221,8 @@ async def _process_chat_message_and_stream(
                             elif func_name == "search_documents":
                                 query_arg = args.get("query")
                                 if query_arg:
-                                    yield f"data: {json.dumps({'status': f'📚 Searching files for \"{query_arg}\"...'})}\n\n"
+                                    status_text = f'📚 Searching files for "{query_arg}"...'
+                                    yield f"data: {json.dumps({'status': status_text})}\n\n"
                                     try:
                                         async with AsyncSessionLocal() as db_session:
                                             allowed_docs_result = await db_session.execute(
@@ -1319,7 +1321,8 @@ async def _process_chat_message_and_stream(
                             elif func_name == "create_todo":
                                 title = args.get("title")
                                 if title:
-                                    yield f"data: {json.dumps({'status': f'✅ Creating task \"{title}\"...'})}\n\n"
+                                    status_text = f'✅ Creating task "{title}"...'
+                                    yield f"data: {json.dumps({'status': status_text})}\n\n"
                                     try:
                                         from app.models.todo import Todo
                                         from datetime import date
@@ -1445,7 +1448,8 @@ async def _process_chat_message_and_stream(
                                 title = args.get("title")
                                 content = args.get("content")
                                 if title and content:
-                                    yield f"data: {json.dumps({'status': f'📝 Creating note \"{title}\"...'})}\n\n"
+                                    status_text = f'📝 Creating note "{title}"...'
+                                    yield f"data: {json.dumps({'status': status_text})}\n\n"
                                     try:
                                         from app.schemas.notes import CreateNoteRequest
                                         from app.services.notes_service import NotesService
@@ -1490,7 +1494,8 @@ async def _process_chat_message_and_stream(
                             elif func_name == "search_notes":
                                 query_arg = args.get("query")
                                 if query_arg:
-                                    yield f"data: {json.dumps({'status': f'📝 Searching notes for \"{query_arg}\"...'})}\n\n"
+                                    status_text = f'📝 Searching notes for "{query_arg}"...'
+                                    yield f"data: {json.dumps({'status': status_text})}\n\n"
                                     try:
                                         from app.services.notes_service import NotesService
                                         async with AsyncSessionLocal() as db_session:
@@ -1534,7 +1539,8 @@ async def _process_chat_message_and_stream(
                                 start_time_str = args.get("start_time")
                                 end_time_str = args.get("end_time")
                                 if title and start_time_str and end_time_str:
-                                    yield f"data: {json.dumps({'status': f'📅 Scheduling event \"{title}\"...'})}\n\n"
+                                    status_text = f'📅 Scheduling event "{title}"...'
+                                    yield f"data: {json.dumps({'status': status_text})}\n\n"
                                     try:
                                         from app.schemas.calendar import CreateCalendarEventRequest
                                         from app.services.calendar_service import CalendarService

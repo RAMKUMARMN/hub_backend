@@ -3,16 +3,75 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Shares your Linux host's network directly.
-    # This allows the container to connect to "localhost" on your device directly.
-    network_mode: "host"
+    container_name: cixiohub_backend
+    ports:
+      - "8000:8000"
     volumes:
-      # Mount codebase for local hot-reloads during development
       - .:/app
-      # Separate volume for uploads so it doesn't pollute host source code
-      - uploads:/app/uploads
+      - ./uploads:/app/uploads
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cixiohub:cixiohub@db:5432/cixiohub
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - AI_SERVICE_URL=http://host.docker.internal:8003
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    container_name: cixiohub_db
+    environment:
+      POSTGRES_USER: cixiohub
+      POSTGRES_PASSWORD: cixiohub
+      POSTGRES_DB: cixiohub
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cixiohub -d cixiohub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: cixiohub_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cixiohub_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
 
 volumes:
-  uploads:
+  postgres_data:
+  redis_data:
+  qdrant_storage:
+

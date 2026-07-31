@@ -21,18 +21,16 @@ class RemoteAIClient(AIClient):
         return httpx.AsyncClient(base_url=settings.ai_service_url, timeout=timeout, headers=headers)
 
     def _get_absolute_path(self, path: str) -> str:
-        from pathlib import Path
+        """Convert a container-local storage path to an HTTP URL that hub_ai can fetch."""
+        import urllib.parse
         if not path or path.startswith("http://") or path.startswith("https://"):
             return path
-        # Strip leading /uploads/ prefix from paths stored by older save_file
-        if path.startswith("/uploads/"):
-            path = path[len("/uploads/"):]
-        p = Path(path)
-        if p.is_absolute():
-            return str(p)
-        if path.startswith("uploads/") or path.startswith("uploads\\"):
-            return str(p.resolve())
-        return str((Path("uploads") / p).resolve())
+        # Strip container path prefixes to get the relative file path
+        for prefix in ("/app/uploads/", "/uploads/", "uploads/"):
+            if path.startswith(prefix):
+                path = path[len(prefix):]
+                break
+        return f"http://host.docker.internal:8000/uploads/{urllib.parse.quote(path.lstrip('/'))}"
 
     async def chat_stream(
         self,
