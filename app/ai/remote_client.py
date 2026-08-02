@@ -160,7 +160,7 @@ class RemoteAIClient(AIClient):
         use_reranker: bool = False,
         include_meta: bool = False,
     ) -> list[dict]:
-        async with self._get_client() as client:
+        async with self._get_client(timeout=180.0) as client:
             response = await client.post(
                 "/api/v1/documents/search",
                 json={
