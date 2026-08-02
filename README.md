@@ -7,8 +7,8 @@ This is the FastAPI backend for CixioHub, an AI-powered chat platform for TKM st
 ## 🚀 Choose Your Setup Method
 
 You can run CixioHub in **two ways**:
-- **[Option A: Full Docker Compose Setup](#option-a-full-docker-compose-setup)** (Runs backend, databases, Redis, and Qdrant via Docker)
-- **[Option B: Native Localhost Setup](#option-b-native-localhost-setup-without-docker)** (Runs backend & AI service natively via Python `uvicorn`)
+- **[Option 1: Full Docker Compose Setup](#option-1-full-docker-compose-setup)** (Runs backend, databases, Redis, and Qdrant via Docker)
+- **[Option 2: Native Localhost Setup](#option-2-native-localhost-setup-without-docker)** (Runs backend & AI service natively via Python `uvicorn`)
 
 ---
 
@@ -27,7 +27,7 @@ You can run CixioHub in **two ways**:
 
 ---
 
-## Option A: Full Docker Compose Setup
+## Option 1: Full Docker Compose Setup
 
 Run backend and supporting databases inside Docker containers.
 
@@ -65,9 +65,9 @@ docker compose logs -f web
 
 ---
 
-## Option B: Native Localhost Setup (Without Docker)
+## Option 2: Native Localhost Setup (Without Docker)
 
-Run the FastAPI backend natively using Python `uvicorn`.
+Run the FastAPI backend natively using Python and `uvicorn`.
 
 ### 1. Start Supporting Databases in Docker
 You only need PostgreSQL, Redis, and Qdrant running:
