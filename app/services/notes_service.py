@@ -18,7 +18,8 @@ class NotesService:
             content=body.content,
             tags=body.tags,
             is_pinned=body.is_pinned,
-            is_archived=body.is_archived
+            is_archived=body.is_archived,
+            workspace_id=body.workspace_id
         )
         self.db.add(note)
         await self.db.commit()
@@ -41,10 +42,19 @@ class NotesService:
         self,
         user_id: uuid.UUID,
         tag: str | None = None,
+        workspace_id: uuid.UUID | None = None,
         pinned: bool | None = None,
         archived: bool | None = None
     ) -> list[Note]:
-        query = select(Note).where(Note.user_id == user_id).order_by(Note.created_at.desc())
+        query = (
+            select(Note)
+            .where(Note.user_id == user_id)
+        )
+
+        if workspace_id is not None:
+            query = query.where(
+                Note.workspace_id == workspace_id
+            )
         
         if tag:
             if self.db.bind.dialect.name == "postgresql":
@@ -74,6 +84,9 @@ class NotesService:
             note.is_pinned = body.is_pinned
         if body.is_archived is not None:
             note.is_archived = body.is_archived
+
+        if body.workspace_id is not None:
+            note.workspace_id = body.workspace_id
 
         await self.db.commit()
         await self.db.refresh(note)

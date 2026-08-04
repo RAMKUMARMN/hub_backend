@@ -89,3 +89,14 @@ class Todo(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    workspace = relationship(
+        "Workspace",
+        back_populates="todos",
+    )

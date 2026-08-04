@@ -27,6 +27,7 @@ from app.routers import (
     folders_router,
     dashboard_router,
     activity_router,
+    workspace_router
 )
 
 @asynccontextmanager
@@ -101,7 +102,7 @@ app.include_router(activity_router, prefix=PREFIX)
 app.include_router(preferences_router, prefix=PREFIX)
 app.include_router(system_router, prefix=PREFIX)
 app.include_router(roles_router, prefix=PREFIX)
-
+app.include_router(workspace_router, prefix=PREFIX)
 uploads_dir = Path("uploads")
 uploads_dir.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")

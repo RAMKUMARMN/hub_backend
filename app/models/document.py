@@ -38,5 +38,15 @@ class Document(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    workspace_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     folder = relationship("DocumentFolder")
+    workspace = relationship(
+        "Workspace",
+        back_populates="documents",
+    )
 

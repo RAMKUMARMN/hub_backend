@@ -14,6 +14,9 @@ from app.models.calendar import CalendarEvent
 from app.models.notes import Note
 from app.models.folder import DocumentFolder
 from app.models.subtask import TodoSubtask
+from app.models.workspace import Workspace
+from app.models.notification import Notification
+from app.models.user_notification import UserNotification
 
 __all__ = [
     "User",
@@ -33,5 +36,8 @@ __all__ = [
     "Role",
     "AuditLog",
     "SystemSettings",
-    "UserPreferences"
+    "UserPreferences",
+    "Workspace",
+    "Notification",
+    "UserNotification",
 ]

@@ -27,7 +27,14 @@ async def get_current_user(
     from app.config import settings
     if settings.debug:
         result = await db.execute(select(User))
-        user = result.scalars().first()
+        # user = result.scalars().first()
+        user = result.scalar_one_or_none()
+
+        print("DB USER:", user)
+
+        if user:
+            print("ACTIVE:", user.is_active)
+
         if user is None:
             user = User(
                 email="dev@tkmce.ac.in",
@@ -48,23 +55,46 @@ async def get_current_user(
     )
 
     if not credentials:
+        print("❌ No Authorization header received")
         raise credentials_exception
 
     token = credentials.credentials
+    print("TOKEN:", token[:40], "...")
+
     try:
         payload = decode_token(token)
+        print("PAYLOAD:", payload)
+
         if payload.get("type") != "access":
+            print("❌ Wrong token type:", payload.get("type"))
             raise credentials_exception
-        user_id: str = payload.get("sub")
+
+        user_id = payload.get("sub")
+        print("SUB:", user_id)
+
         if user_id is None:
+            print("❌ Missing sub claim")
             raise credentials_exception
-    except JWTError:
+
+    except JWTError as e:
+        print("❌ JWT ERROR:", repr(e))
         raise credentials_exception
 
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    result = await db.execute(
+        select(User).where(User.id == uuid.UUID(user_id))
+    )
+
     user = result.scalar_one_or_none()
+
+    print("USER:", user)
+
+    if user:
+        print("ACTIVE:", user.is_active)
+
     if user is None or not user.is_active:
+        print("❌ User not found or inactive")
         raise credentials_exception
+
     return user
 
 
